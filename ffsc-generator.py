@@ -50,6 +50,7 @@ def rotate_2d(degrees, point, origin):
 
     return new_x, new_y
 
+# starts, continues or finishes drawing a polygon with many sides using POLYGON. state 1 if first point, 1 if any mid-point and 2 if an end point
 def draw_part_poly_eagle(signal_name, layer_number, width, poly_point_x, poly_point_y, radius, state):
 
     if (state == 0):        # if it's the first point
@@ -76,12 +77,12 @@ def draw_rect_poly_transform(segment_number, signal_name, layer_number, width, p
     draw_part_poly_transform(segment_number, signal_name, layer_number, width, pad_start_x+(polygon_draw_width/2),pad_finish_y-(polygon_draw_width/2), 0, 1)
     draw_part_poly_transform(segment_number, signal_name, layer_number, width, pad_start_x+(polygon_draw_width/2),pad_start_y+(polygon_draw_width/2), 0, 2)
 
-#   abstract drawing of wire
+#   draws a trace using the WIRE command
 def draw_wire(signal_name, layer_number, wire_width, wire_start_x, wire_start_y, wire_finish_x, wire_finish_y):    
     text_file.write("LAYER {0:d};\n" .format(layer_number))
     text_file.write("WIRE '{0:s}{1:s}' {2:.6g} ({3:.6g} {4:.6g}) ({5:.6g} {6:.6g});\n" .format(net_name_prefix, signal_name, wire_width, wire_start_x, wire_start_y, wire_finish_x, wire_finish_y))
     
-#   origin and translation are (x,y) tuples
+#   draws a trace using the WIRE command, with transformation into relevant position
 def draw_wire_transform(segment_number, signal_name, layer_number, wire_width, (wire_start_x, wire_start_y), (wire_finish_x, wire_finish_y)):
     wire_start_x, wire_start_y = calc_new_point(segment_number, (wire_start_x, wire_start_y))
     wire_finish_x, wire_finish_y = calc_new_point(segment_number, (wire_finish_x, wire_finish_y))
@@ -97,7 +98,7 @@ def draw_via_transform(segment_number, signal_name, via_diameter, drill_diameter
     via_position_x, via_position_y = calc_new_point(segment_number, (via_position_x, via_position_y))
     draw_via(signal_name, via_diameter, drill_diameter, layer_range, via_position_x, via_position_y)
 
-#   abstract drawing of wire
+#   draws an arc / curve from one point to another with specified diameter
 def draw_arc(signal_name, layer_number, wire_width, clockwise, arc_start_x, arc_start_y, arc_diameter_x, arc_diameter_y, arc_finish_x, arc_finish_y):
     if clockwise == True:
         clockwise_verbose = "CW"
@@ -107,6 +108,7 @@ def draw_arc(signal_name, layer_number, wire_width, clockwise, arc_start_x, arc_
     text_file.write("LAYER {0:d}\n" .format(layer_number))
     text_file.write("ARC '{0:s}{1:s}' {2:s} ROUND {3:.6g} ({4:.6g} {5:.6g}) ({6:.6g} {7:.6g}) ({8:.6g} {9:.6g});\n" .format(net_name_prefix, signal_name, clockwise_verbose, wire_width, arc_start_x, arc_start_y, arc_diameter_x, arc_diameter_y, arc_finish_x, arc_finish_y))
 
+#   adds a radius where two wires meet
 def mitre_point(radius, (mitre_x, mitre_y)):
     text_file.write("MITER {0:.6g} ({1:.6g} {2:.6g});\n" .format(radius,mitre_x,mitre_y))
 
@@ -247,7 +249,7 @@ def calc_symmetrical_offset(segment_number, closest_centre_x_connection): #left/
 
         return symmetrical_edge_offset_y
 
-
+# draw a single track in either of the end segments, joining the pad to the narrower portion
 def draw_connection(segment_number, connection_number, closest_centre_x_connection):
 
     # 1/ get pad coords
@@ -285,9 +287,9 @@ def draw_connection(segment_number, connection_number, closest_centre_x_connecti
 
     override_inter_track_spacing_angle = 0
 
-    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], (pad_centre_x, pad_start_y+(pad_length/2)), (pad_centre_x, meet_pad_centre_y))
-    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], (pad_centre_x, meet_pad_centre_y), (track_centre_x, meet_track_centre_y))
-    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], (track_centre_x, meet_track_centre_y), (track_centre_x, 0))
+    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], (pad_centre_x, pad_start_y+(pad_length/2)), (pad_centre_x, meet_pad_centre_y))  # draw the stem coming from the pad
+    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], (pad_centre_x, meet_pad_centre_y), (track_centre_x, meet_track_centre_y))       # draw the angular part
+    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], (track_centre_x, meet_track_centre_y), (track_centre_x, 0))                     # draw the track meeting the end of segment
 
 #   draws the outer cuts for the end sections and the reinforcement layers
 def draw_outer_cut(segment_number, closest_centre_x_connection):
@@ -368,6 +370,7 @@ def draw_outer_cut(segment_number, closest_centre_x_connection):
     draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, outline_first_pad_x, segment_length[segment_number]-taper_distance_from_edge, 0, 1)
     draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, outline_first_pad_x, segment_length[segment_number], 0, 2)
 
+# draw the two vias that make up the castellation ends and solder pass-through
 def draw_vias_all(segment_number):
 
     for connection_number in range (0,len(track_widths)):
@@ -460,6 +463,7 @@ def draw_next_connection(angle_number):
 
                 draw_arc("outline",outline_layer_number,outline_draw_width, clockwise, arc_outline_start_x, arc_outline_start_y, arc_outline_diameter_x, arc_outline_diameter_y, arc_outline_finish_x, arc_outline_finish_y)
 
+# draw an 'inner' segment - any straight segment that isn't an end
 def draw_inner(segment_number):
 
     for connection_number in range (0,len(track_widths)):
