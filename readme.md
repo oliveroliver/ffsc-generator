@@ -9,7 +9,7 @@ This is a simple Python script designed to generate FFSC designs - soldered, fle
 
 * Install any version of [Eagle] later than 6.5.0
 * Edit 'parameters_x.py' to your liking
-* Run 'ffsc-flex-connector-script.py'
+* Run 'ffsc-generator.py'
 * Eagle will open with your new PCB / FFSC design.
 
    [eagle]: <http://www.cadsoftusa.com/>
