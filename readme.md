@@ -1,6 +1,6 @@
 # FFSC (Flat Flexible Soldered Connector) Generator
 
-This is a simple Python script designed to generate FFSC designs - soldered, flexible PCB interconnects as seen [here].
+This is a simple Python script designed to generate FFSC designs - soldered, flexible PCB interconnects as seen [here] [and here].
 
 * Fully configurable
 * Supports bendy connections with multiple segments
@@ -14,3 +14,4 @@ This is a simple Python script designed to generate FFSC designs - soldered, fle
 
    [eagle]: <http://www.cadsoftusa.com/>
    [here]: <http://oliver.st/blog/flexible-pcb-connections/>
+   [and here]: <http://oliver.st/blog/generating-ffsc-designs/>
