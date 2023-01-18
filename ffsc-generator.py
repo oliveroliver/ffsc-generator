@@ -14,39 +14,28 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-
-import subprocess
-import datetime
 import math
-
-########################################################################################################################
 
 from parameters_1 import *    #  the user parameters should be in parameters_x.py
 
-########################################################################################################################
-
-now = datetime.datetime.now()
-
-eagle_path = "C:\\EAGLE-7.2.0\\bin\\eaglecon.exe"
-working_path = ".\\exports\\"
-drc_path = ".\\drc-disable.dru"
-filename = "ffsc-" + now.strftime("%Y-%m-%d-%H%M%S-%f")
+DRC_PATH = "drc-disable.dru"
+FILENAME = "parameters_1"
 
 override_inter_track_spacing_angle = 0
 
 #   rotates a point around a point
-def rotate_2d(degrees, point, origin):
+def rotate_2d(degrees, point_x, point_y, origin_x, origin_y):
 
     degrees *= -1
 
-    x = point[0] - origin[0]
-    y = point[1] - origin[1]
+    x = point_x - origin_x
+    y = point_y - origin_y
 
     new_x = (x*math.cos(math.radians(degrees))) - (y*math.sin(math.radians(degrees)))
     new_y = (x*math.sin(math.radians(degrees))) + (y*math.cos(math.radians(degrees)))
 
-    new_x += origin[0]
-    new_y += origin[1]
+    new_x += origin_x
+    new_y += origin_y
 
     return new_x, new_y
 
@@ -66,7 +55,7 @@ def draw_part_poly_eagle(signal_name, layer_number, width, poly_point_x, poly_po
 
 #   draw part of the poly needed, state: 0 = first point, 1 = any mid point, 2 = last point and radius: 0 = straight line, any other value = radius of arc
 def draw_part_poly_transform(segment_number, signal_name, layer_number, width, poly_point_x, poly_point_y, radius, state):
-    poly_point_x,poly_point_y = calc_new_point(segment_number,(poly_point_x,poly_point_y))
+    poly_point_x,poly_point_y = calc_new_point(segment_number, poly_point_x,poly_point_y)
     draw_part_poly_eagle(signal_name, layer_number, width, poly_point_x, poly_point_y, radius, state)
 
 #   this is like drawing a normal rectangle, except drawn as a poly, with transform functions included. origin and translation are (x,y) tuples
@@ -78,24 +67,24 @@ def draw_rect_poly_transform(segment_number, signal_name, layer_number, width, p
     draw_part_poly_transform(segment_number, signal_name, layer_number, width, pad_start_x+(polygon_draw_width/2),pad_start_y+(polygon_draw_width/2), 0, 2)
 
 #   draws a trace using the WIRE command
-def draw_wire(signal_name, layer_number, wire_width, wire_start_x, wire_start_y, wire_finish_x, wire_finish_y):    
+def draw_wire(signal_name, layer_number, wire_width, wire_start_x, wire_start_y, wire_finish_x, wire_finish_y):
     text_file.write("LAYER {0:d};\n" .format(layer_number))
     text_file.write("WIRE '{0:s}{1:s}' {2:.6g} ({3:.6g} {4:.6g}) ({5:.6g} {6:.6g});\n" .format(net_name_prefix, signal_name, wire_width, wire_start_x, wire_start_y, wire_finish_x, wire_finish_y))
-    
+
 #   draws a trace using the WIRE command, with transformation into relevant position
-def draw_wire_transform(segment_number, signal_name, layer_number, wire_width, (wire_start_x, wire_start_y), (wire_finish_x, wire_finish_y)):
-    wire_start_x, wire_start_y = calc_new_point(segment_number, (wire_start_x, wire_start_y))
-    wire_finish_x, wire_finish_y = calc_new_point(segment_number, (wire_finish_x, wire_finish_y))
+def draw_wire_transform(segment_number, signal_name, layer_number, wire_width, wire_start_x, wire_start_y, wire_finish_x, wire_finish_y):
+    wire_start_x, wire_start_y = calc_new_point(segment_number, wire_start_x, wire_start_y)
+    wire_finish_x, wire_finish_y = calc_new_point(segment_number, wire_finish_x, wire_finish_y)
 
     draw_wire(signal_name, layer_number, wire_width, wire_start_x, wire_start_y, wire_finish_x, wire_finish_y)
-    
+
 #   place a via at the location specified
 def draw_via(signal_name, via_diameter, drill_diameter, layer_range, via_position_x, via_position_y):
-     text_file.write("CHANGE DRILL {0:.6g};\n" .format(drill_diameter))
-     text_file.write("VIA '{0:s}{1:s}' {2:.6g} Round {3:s} ({4:.6g} {5:.6g});\n" .format(net_name_prefix, signal_name, via_diameter, layer_range, via_position_x, via_position_y))
-     
+    text_file.write("CHANGE DRILL {0:.6g};\n" .format(drill_diameter))
+    text_file.write("VIA '{0:s}{1:s}' {2:.6g} Round {3:s} ({4:.6g} {5:.6g});\n" .format(net_name_prefix, signal_name, via_diameter, layer_range, via_position_x, via_position_y))
+
 def draw_via_transform(segment_number, signal_name, via_diameter, drill_diameter, layer_range, via_position_x, via_position_y):
-    via_position_x, via_position_y = calc_new_point(segment_number, (via_position_x, via_position_y))
+    via_position_x, via_position_y = calc_new_point(segment_number, via_position_x, via_position_y)
     draw_via(signal_name, via_diameter, drill_diameter, layer_range, via_position_x, via_position_y)
 
 #   draws an arc / curve from one point to another with specified diameter
@@ -104,17 +93,17 @@ def draw_arc(signal_name, layer_number, wire_width, clockwise, arc_start_x, arc_
         clockwise_verbose = "CW"
     else:
         clockwise_verbose = "CCW"
-        
+
     text_file.write("LAYER {0:d}\n" .format(layer_number))
     text_file.write("ARC '{0:s}{1:s}' {2:s} ROUND {3:.6g} ({4:.6g} {5:.6g}) ({6:.6g} {7:.6g}) ({8:.6g} {9:.6g});\n" .format(net_name_prefix, signal_name, clockwise_verbose, wire_width, arc_start_x, arc_start_y, arc_diameter_x, arc_diameter_y, arc_finish_x, arc_finish_y))
 
 #   adds a radius where two wires meet
-def mitre_point(radius, (mitre_x, mitre_y)):
+def mitre_point(radius, mitre_x, mitre_y):
     text_file.write("MITER {0:.6g} ({1:.6g} {2:.6g});\n" .format(radius,mitre_x,mitre_y))
 
-def mitre_point_transform(segment_number, radius, (mitre_x, mitre_y)):
-    mitre_x, mitre_y = calc_new_point(segment_number, (mitre_x, mitre_y))
-    mitre_point(radius, (mitre_x, mitre_y))
+def mitre_point_transform(segment_number, radius, mitre_x, mitre_y):
+    mitre_x, mitre_y = calc_new_point(segment_number, mitre_x, mitre_y)
+    mitre_point(radius, mitre_x, mitre_y)
 
 
 #   return the pad width according to the pad to track ratio and minimum pad size
@@ -202,7 +191,7 @@ def calc_meeting_y(segment_number, connection_number, centre_x_connection, m, x,
 #   returns the distance on y axis between (pad_centre_x, pad_start_y) and track that may intersect it IF it overshoots, otherwise return 0
 def calc_minimum_pad_length_ajustment(segment_number, connection_number, closest_centre_x_connection):
 
-    pad_start_x, pad_start_y, pad_finish_x, pad_finish_y, pad_centre_x, pad_width, pad_length = calc_pad_coordinates(segment_number, connection_number)     # calc pad dimensions / coords for the connection number
+    _pad_start_x, pad_start_y, _pad_finish_x, _pad_finish_y, pad_centre_x, _pad_width, _pad_length = calc_pad_coordinates(segment_number, connection_number)     # calc pad dimensions / coords for the connection number
     track_centre_x = calc_track_centre_x(connection_number)                                                                                                 # calc track centres for the connection number
 
     if track_centre_x < pad_centre_x:
@@ -214,9 +203,9 @@ def calc_minimum_pad_length_ajustment(segment_number, connection_number, closest
 
     # see if the connection intersects above the additional_track_from_pad_length, then calculate the maximum y_offset needed
     if (connection_number <= closest_centre_x_connection):  # if its left of centre (x = 0)
-        track_y_intersect, track_y_offset, track_meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection, m, calc_pad_coordinates(segment_number, connection_number)[4], 0, 0)
+        _track_y_intersect, _track_y_offset, track_meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection, m, calc_pad_coordinates(segment_number, connection_number)[4], 0, 0)
     else:
-        track_y_intersect, track_y_offset, track_meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection+1, m, calc_pad_coordinates(segment_number, connection_number)[4], 0, 0)
+        _track_y_intersect, _track_y_offset, track_meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection+1, m, calc_pad_coordinates(segment_number, connection_number)[4], 0, 0)
 
     if track_meet_pad_centre_y > (pad_start_y - additional_track_from_pad_length):
         total_additional_y_offset = track_meet_pad_centre_y - (pad_start_y - additional_track_from_pad_length)
@@ -257,7 +246,7 @@ def draw_connection(segment_number, connection_number, closest_centre_x_connecti
     # 3/ work out symmetry differences
     # 4/ draw the connection offsetting on Y by the max_overshoot and dividing the symmetry differences by number of connections on shorter side and adding it on to each spacing per connection
 
-    pad_start_x, pad_start_y, pad_finish_x, pad_finish_y, pad_centre_x, pad_width, pad_length = calc_pad_coordinates(segment_number, connection_number)     # calc pad dimensions / coords for the connection number
+    _pad_start_x, pad_start_y, _pad_finish_x, _pad_finish_y, pad_centre_x, _pad_width, pad_length = calc_pad_coordinates(segment_number, connection_number)     # calc pad dimensions / coords for the connection number
     track_centre_x = calc_track_centre_x(connection_number)                                                                                 # calc track centres for the connection number
 
     if track_centre_x < pad_centre_x:
@@ -279,17 +268,17 @@ def draw_connection(segment_number, connection_number, closest_centre_x_connecti
         override_inter_track_spacing_angle = (abs((math.cos(math.atan(m)) * symmetrical_edge_offset_y )) / ((len(track_widths)-1) - (closest_centre_x_connection+1))) + inter_track_spacing_angle   # calculate the perpendicular distance divided by the number of spaces to spread across
 
     if (connection_number <= closest_centre_x_connection):  # if its left of centre (x = 0)
-        y_intersect, y_offset, meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection, m, pad_centre_x, 0, total_additional_spacing)
-        y_intersect, y_offset, meet_track_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection, m, track_centre_x, 0, total_additional_spacing)
+        _y_intersect, _y_offset, meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection, m, pad_centre_x, 0, total_additional_spacing)
+        _y_intersect, _y_offset, meet_track_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection, m, track_centre_x, 0, total_additional_spacing)
     else:
-        y_intersect, y_offset, meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection+1, m, pad_centre_x, 0, total_additional_spacing)
-        y_intersect, y_offset, meet_track_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection+1, m, track_centre_x, 0, total_additional_spacing)
+        _y_intersect, _y_offset, meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection+1, m, pad_centre_x, 0, total_additional_spacing)
+        _y_intersect, _y_offset, meet_track_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection+1, m, track_centre_x, 0, total_additional_spacing)
 
     override_inter_track_spacing_angle = 0
 
-    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], (pad_centre_x, pad_start_y+(pad_length/2)), (pad_centre_x, meet_pad_centre_y))  # draw the stem coming from the pad
-    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], (pad_centre_x, meet_pad_centre_y), (track_centre_x, meet_track_centre_y))       # draw the angular part
-    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], (track_centre_x, meet_track_centre_y), (track_centre_x, 0))                     # draw the track meeting the end of segment
+    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], pad_centre_x, pad_start_y+(pad_length/2), pad_centre_x, meet_pad_centre_y)  # draw the stem coming from the pad
+    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], pad_centre_x, meet_pad_centre_y, track_centre_x, meet_track_centre_y)       # draw the angular part
+    draw_wire_transform(segment_number,str(connection_number),top_layer_number,track_widths[connection_number], track_centre_x, meet_track_centre_y, track_centre_x, 0)                     # draw the track meeting the end of segment
 
 #   draws the outer cuts for the end sections and the reinforcement layers
 def draw_outer_cut(segment_number, closest_centre_x_connection):
@@ -297,7 +286,7 @@ def draw_outer_cut(segment_number, closest_centre_x_connection):
     symmetrical_edge_offset_y = calc_symmetrical_offset(segment_number, closest_centre_x_connection)
 
     # left hand side
-    pad_start_x, pad_start_y, pad_finish_x, pad_finish_y, pad_centre_x, pad_width, pad_length = calc_pad_coordinates(segment_number,0)
+    pad_start_x, _pad_start_y, pad_finish_x, _pad_finish_y, _pad_centre_x, pad_width, _pad_length = calc_pad_coordinates(segment_number,0)
     track_centre_x = calc_track_centre_x(0)
 
     outline_first_pad_x = pad_start_x - track_to_edge_spacing
@@ -311,7 +300,7 @@ def draw_outer_cut(segment_number, closest_centre_x_connection):
     left_outline_track_intersect_y = calc_meeting_y(segment_number, 0, closest_centre_x_connection, -gradient_of_taper, outline_first_track_x, track_to_edge_spacing+(track_widths[0]/2), find_max_overshoot(segment_number,closest_centre_x_connection)+c )[2]
 
     # right hand side
-    pad_start_x, pad_start_y, pad_finish_x, pad_finish_y, pad_centre_x, pad_width, pad_length = calc_pad_coordinates(segment_number, len(track_widths)-1)
+    pad_start_x, _pad_start_y, pad_finish_x, _pad_finish_y, _pad_centre_x, pad_width, _pad_length = calc_pad_coordinates(segment_number, len(track_widths)-1)
     track_centre_x = calc_track_centre_x(len(track_widths)-1)
 
     outline_last_pad_x = pad_finish_x + track_to_edge_spacing
@@ -325,24 +314,24 @@ def draw_outer_cut(segment_number, closest_centre_x_connection):
     right_outline_track_intersect_y = calc_meeting_y(segment_number, len(track_widths)-1, closest_centre_x_connection+1, gradient_of_taper, outline_last_track_x, track_to_edge_spacing+(track_widths[len(track_widths)-1]/2), find_max_overshoot(segment_number,closest_centre_x_connection)+c )[2]
 
     # draw outline
-    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, (outline_first_pad_x, segment_length[segment_number]), (outline_last_pad_x, segment_length[segment_number]))    # top line
+    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, outline_first_pad_x, segment_length[segment_number], outline_last_pad_x, segment_length[segment_number])    # top line
 
-    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, (outline_first_pad_x, segment_length[segment_number]), (outline_first_pad_x, left_outline_pad_intersect_y))     # left upper
-    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, (outline_first_pad_x, left_outline_pad_intersect_y), (outline_first_track_x, left_outline_track_intersect_y))   # left angle
-    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, (outline_first_track_x, left_outline_track_intersect_y), (outline_first_track_x, 0))                            # left lower
+    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, outline_first_pad_x, segment_length[segment_number], outline_first_pad_x, left_outline_pad_intersect_y)     # left upper
+    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, outline_first_pad_x, left_outline_pad_intersect_y, outline_first_track_x, left_outline_track_intersect_y)   # left angle
+    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, outline_first_track_x, left_outline_track_intersect_y, outline_first_track_x, 0)                            # left lower
 
-    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, (outline_last_pad_x, segment_length[segment_number]), (outline_last_pad_x, right_outline_pad_intersect_y))      # right upper
-    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, (outline_last_pad_x, right_outline_pad_intersect_y), (outline_last_track_x, right_outline_track_intersect_y))   # right angle
-    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, (outline_last_track_x, right_outline_track_intersect_y), (outline_last_track_x, 0))                             # right lower
+    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, outline_last_pad_x, segment_length[segment_number], outline_last_pad_x, right_outline_pad_intersect_y)      # right upper
+    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, outline_last_pad_x, right_outline_pad_intersect_y, outline_last_track_x, right_outline_track_intersect_y)   # right angle
+    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, outline_last_track_x, right_outline_track_intersect_y, outline_last_track_x, 0)                             # right lower
 
     # miter the edges
-    mitre_point_transform(segment_number, outline_corner_radius, (outline_first_pad_x, segment_length[segment_number]))     #top left
-    mitre_point_transform(segment_number, outline_angle_radius, (outline_first_pad_x, left_outline_pad_intersect_y))        #left first angle
-    mitre_point_transform(segment_number, outline_angle_radius, (outline_first_track_x, left_outline_track_intersect_y))    #left second angle
+    mitre_point_transform(segment_number, outline_corner_radius, outline_first_pad_x, segment_length[segment_number])     #top left
+    mitre_point_transform(segment_number, outline_angle_radius, outline_first_pad_x, left_outline_pad_intersect_y)        #left first angle
+    mitre_point_transform(segment_number, outline_angle_radius, outline_first_track_x, left_outline_track_intersect_y)    #left second angle
 
-    mitre_point_transform(segment_number, outline_corner_radius, (outline_last_pad_x, segment_length[segment_number]))      #top right
-    mitre_point_transform(segment_number, outline_angle_radius, (outline_last_pad_x, right_outline_pad_intersect_y))        #right first angle
-    mitre_point_transform(segment_number, outline_angle_radius, (outline_last_track_x, right_outline_track_intersect_y))    #right second angle
+    mitre_point_transform(segment_number, outline_corner_radius, outline_last_pad_x, segment_length[segment_number])      #top right
+    mitre_point_transform(segment_number, outline_angle_radius, outline_last_pad_x, right_outline_pad_intersect_y)        #right first angle
+    mitre_point_transform(segment_number, outline_angle_radius, outline_last_track_x, right_outline_track_intersect_y)    #right second angle
 
     # draw the reinforcement layer
 
@@ -350,7 +339,7 @@ def draw_outer_cut(segment_number, closest_centre_x_connection):
 
     for i in range (0,len(track_widths)):   # draw the arc shaped fingers around each pad
 
-        pad_start_x, pad_start_y, pad_finish_x, pad_finish_y, pad_centre_x, pad_width, pad_length = calc_pad_coordinates(segment_number,i)                      # calculate the relevant pad dimensions
+        pad_start_x, _pad_start_y, pad_finish_x, _pad_finish_y, _pad_centre_x, pad_width, _pad_length = calc_pad_coordinates(segment_number,i)                      # calculate the relevant pad dimensions
 
         draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_start_x, segment_length[segment_number], 0, 1)
         # to calculate the height of the arc, use intersecting chord theorum R = (H/2) + ((W^2)/(8*H))
@@ -358,7 +347,7 @@ def draw_outer_cut(segment_number, closest_centre_x_connection):
         draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_finish_x, segment_length[segment_number]-distance_arc_from_edge, 0, 1)
         draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_finish_x, segment_length[segment_number], 0, 1)
 
-    pad_start_x, pad_start_y, pad_finish_x, pad_finish_y, pad_centre_x, pad_width, pad_length = calc_pad_coordinates(segment_number, len(track_widths)-1)
+    pad_start_x, _pad_start_y, pad_finish_x, _pad_finish_y, _pad_centre_x, pad_width, _pad_length = calc_pad_coordinates(segment_number, len(track_widths)-1)
     draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, outline_last_pad_x, segment_length[segment_number], 0, 1)
 
     draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, outline_last_pad_x, segment_length[segment_number]-taper_distance_from_edge, 0, 1)
@@ -408,17 +397,20 @@ def calc_abs_segment_origin_recursive(segment_number, count):
     if (count == 0):
         return calc_segment_rotation_origin(segment_number)
     else:
-        return rotate_2d(segment_angle[count-1],(calc_abs_segment_origin_recursive(segment_number, count-1)), (calc_abs_segment_origin_recursive(segment_number-(segment_number-count), segment_number-(segment_number-count)-1)))
+        point_x, point_y = calc_abs_segment_origin_recursive(segment_number, count-1)
+        origin_x, origin_y = calc_abs_segment_origin_recursive(segment_number-(segment_number-count), segment_number-(segment_number-count)-1)
+        absolute_point_x, absolute_point_y = rotate_2d(segment_angle[count-1], point_x, point_y, origin_x, origin_y)
+        return absolute_point_x, absolute_point_y
 
 # calculate the new point location after passing the current point tuple (x,y) you need and the segment it is in
-def calc_new_point(segment_number, point):
+def calc_new_point(segment_number, point_x, point_y):
 
-    new_x = point[0]
-    new_y = point[1]
+    new_x = point_x
+    new_y = point_y
 
     if (segment_number == 0):                               # if its the first segment (segment 0) (i.e it's just mirroring it)
-        new_x = point[0]
-        new_y = -point[1]
+        new_x = point_x
+        new_y = -point_y
     else:
         delta_y = 0
 
@@ -428,7 +420,8 @@ def calc_new_point(segment_number, point):
         new_y += delta_y
 
         for i in range (1,segment_number+1):    # loop through and run the recursive operation to calculate new coordinates
-            new_x, new_y = rotate_2d(segment_angle[i-1],(new_x, new_y),(calc_abs_segment_origin_recursive(i, i-1)))    # rotate the point around the necessary origin
+            absolute_point_x, absolute_point_y = calc_abs_segment_origin_recursive(i, i-1)
+            new_x, new_y = rotate_2d(segment_angle[i-1], new_x, new_y, absolute_point_x, absolute_point_y)    # rotate the point around the necessary origin
 
     return new_x, new_y
 
@@ -444,9 +437,9 @@ def draw_next_connection(angle_number):
                 arc_diameter_x = calc_track_centre_x(connection_number) + ((calc_track_centre_x(len(track_widths)-1) - calc_track_centre_x(connection_number) + segment_inner_radius[angle_number])*2)
                 clockwise = True
 
-            arc_track_diameter_x, arc_track_diameter_y = calc_new_point(angle_number,(arc_diameter_x,segment_length[angle_number]*int(angle_number != 0)))
-            arc_track_start_x, arc_track_start_y = calc_new_point(angle_number,(calc_track_centre_x(connection_number),segment_length[angle_number]*int(angle_number != 0)))
-            arc_track_finish_x, arc_track_finish_y = calc_new_point(angle_number+1,(calc_track_centre_x(connection_number),0))
+            arc_track_diameter_x, arc_track_diameter_y = calc_new_point(angle_number, arc_diameter_x, segment_length[angle_number]*int(angle_number != 0))
+            arc_track_start_x, arc_track_start_y = calc_new_point(angle_number, calc_track_centre_x(connection_number), segment_length[angle_number]*int(angle_number != 0))
+            arc_track_finish_x, arc_track_finish_y = calc_new_point(angle_number+1, calc_track_centre_x(connection_number), 0)
 
             #draw_wire(str(connection_number), top_layer_number,track_widths[connection_number], arc_track_start_x, arc_track_start_y, arc_track_finish_x, arc_track_finish_y) # if a straight line was required, useful for testing
             draw_arc(str(connection_number), top_layer_number,track_widths[connection_number], clockwise, arc_track_start_x, arc_track_start_y, arc_track_diameter_x, arc_track_diameter_y, arc_track_finish_x, arc_track_finish_y)
@@ -455,11 +448,11 @@ def draw_next_connection(angle_number):
             if (connection_number == 0) or (connection_number == len(track_widths)-1):    # if the connection number is 0, then draw the left hand outline ... using abs(y)/y to get multiplier 1 or -1
                 arc_outline_diameter_x = arc_diameter_x + ((track_to_edge_spacing + (track_widths[connection_number]/2)) * ((abs(calc_track_centre_x(connection_number))/calc_track_centre_x(connection_number))*-1))
                 arc_outline_diameter_y = segment_length[angle_number]*int(angle_number != 0)
-                arc_outline_diameter_x,arc_outline_diameter_y = calc_new_point(angle_number,(arc_outline_diameter_x,arc_outline_diameter_y))
+                arc_outline_diameter_x,arc_outline_diameter_y = calc_new_point(angle_number, arc_outline_diameter_x, arc_outline_diameter_y)
                 arc_outline_start_x = calc_track_centre_x(connection_number) - ((track_to_edge_spacing + (track_widths[connection_number]/2)) * ((abs(calc_track_centre_x(connection_number))/calc_track_centre_x(connection_number))*-1))
                 arc_outline_start_y = (segment_length[angle_number]*int(angle_number != 0))         # calculate the standard track position
-                arc_outline_finish_x, arc_outline_finish_y = calc_new_point(angle_number+1,(arc_outline_start_x,0))
-                arc_outline_start_x, arc_outline_start_y = calc_new_point(angle_number,(arc_outline_start_x,arc_outline_start_y))
+                arc_outline_finish_x, arc_outline_finish_y = calc_new_point(angle_number+1, arc_outline_start_x, 0)
+                arc_outline_start_x, arc_outline_start_y = calc_new_point(angle_number, arc_outline_start_x, arc_outline_start_y)
 
                 draw_arc("outline",outline_layer_number,outline_draw_width, clockwise, arc_outline_start_x, arc_outline_start_y, arc_outline_diameter_x, arc_outline_diameter_y, arc_outline_finish_x, arc_outline_finish_y)
 
@@ -467,14 +460,14 @@ def draw_next_connection(angle_number):
 def draw_inner(segment_number):
 
     for connection_number in range (0,len(track_widths)):
-        draw_wire_transform(segment_number, str(connection_number),top_layer_number,track_widths[connection_number],(calc_track_centre_x(connection_number), 0), (calc_track_centre_x(connection_number), segment_length[segment_number]))
+        draw_wire_transform(segment_number, str(connection_number),top_layer_number,track_widths[connection_number],calc_track_centre_x(connection_number), 0, calc_track_centre_x(connection_number), segment_length[segment_number])
 
     #draw the outline for the inner section too
     outline_first_track_x = calc_track_centre_x(0) - (track_widths[0]/2) - track_to_edge_spacing
-    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, (outline_first_track_x, 0), (outline_first_track_x, segment_length[segment_number]))                    # left lower
+    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, outline_first_track_x, 0, outline_first_track_x, segment_length[segment_number])                    # left lower
 
     outline_last_track_x = calc_track_centre_x(len(track_widths)-1) + (track_widths[len(track_widths)-1]/2) + track_to_edge_spacing
-    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, (outline_last_track_x, 0), (outline_last_track_x, segment_length[segment_number]))                      # right lower
+    draw_wire_transform(segment_number, "outline",outline_layer_number,outline_draw_width, outline_last_track_x, 0, outline_last_track_x, segment_length[segment_number])                      # right lower
 
 # segment number needs to be 0 (starting end) or 2 (finishing end)
 def draw_end(segment_number):
@@ -482,11 +475,11 @@ def draw_end(segment_number):
     # find the point at which the angled part goes from -ve gradient to a +ve gradient
     for connection_number in range (0,len(track_widths)):
         if calc_track_centre_x(connection_number) > calc_pad_coordinates(0, connection_number)[4]:
-                closest_centre_x_connection = connection_number
+            closest_centre_x_connection = connection_number
 
     # draw each of the pads, with the centre being at x = 0
     for connection_number in range (0,len(track_widths)):
-        pad_start_x, pad_start_y, pad_finish_x, pad_finish_y, pad_centre_x, pad_width, pad_length = calc_pad_coordinates(segment_number, connection_number)
+        pad_start_x, pad_start_y, pad_finish_x, pad_finish_y, _pad_centre_x, _pad_width, _pad_length = calc_pad_coordinates(segment_number, connection_number)
         draw_rect_poly_transform(segment_number, str(connection_number),top_layer_number,polygon_draw_width, pad_start_x, pad_start_y, pad_finish_x, pad_finish_y)   # top layer
         #draw_rect_poly_transform(segment_number, str(connection_number),bottom_layer_number,polygon_draw_width, pad_start_x, pad_start_y, pad_finish_x, pad_finish_y)   # bottom layer
 
@@ -502,31 +495,29 @@ def draw_end(segment_number):
 
 def output_eagle_script():
 
-    global additional_track_from_pad_length
+    # global additional_track_from_pad_length
 
     # convert any int values to float in list
     for index, item in enumerate(track_widths):
         track_widths[index] = float(item)
 
-# set the additional_track_from_pad_length to half of the widest track, OR leave if
-#    if ((max(track_widths)/2) > additional_track_from_pad_length):
-#        additional_track_from_pad_length = max(track_widths)/2
+    # set the additional_track_from_pad_length to half of the widest track, OR leave if
+    # if ((max(track_widths)/2) > additional_track_from_pad_length):
+    #     additional_track_from_pad_length = max(track_widths)/2
 
     for segment_number in range (0,len(segment_length)):
-         if (segment_number == 0):                           # if it needs to draw the first end
-             draw_end(segment_number)
-         elif (segment_number == len(segment_length)-1):     # if it needs to draw the last end
-             draw_next_connection(segment_number-1)
-             draw_end(segment_number)
-         else:                                               # otherwise draw a connecting curve and next inner segment
-             draw_next_connection(segment_number-1)
-             draw_inner(segment_number)
+        if (segment_number == 0):                           # if it needs to draw the first end
+            draw_end(segment_number)
+        elif (segment_number == len(segment_length)-1):     # if it needs to draw the last end
+            draw_next_connection(segment_number-1)
+            draw_end(segment_number)
+        else:                                               # otherwise draw a connecting curve and next inner segment
+            draw_next_connection(segment_number-1)
+            draw_inner(segment_number)
 
 
     for connection_number in range (0,len(track_widths)):
         text_file.write("RATSNEST {0:s}{1:d};\n" .format(net_name_prefix, connection_number))
-
-
 
 
 # remove all zero values from length list (in case 0 has been passed to this)
@@ -534,10 +525,10 @@ def output_eagle_script():
 
 print('Creating new Eagle Script')
 
-text_file = open(working_path + filename + ".scr", "w")
+text_file = open(f"{FILENAME}.scr", "w", encoding="utf-8")
 text_file.write("#Draws the outline of the flexible connector system;\n")
 text_file.write("Grid mm 1 off;\n")
-text_file.write("DRC LOAD " + drc_path + ";\n")
+text_file.write("DRC LOAD " + DRC_PATH + ";\n")
 text_file.write("SET WIRE_BEND 2;\n")
 text_file.write("SET PALETTE WHITE;\n") # set background colour
 
@@ -564,10 +555,8 @@ output_eagle_script()
 
 text_file.write("RIPUP net_reinforcement;\n")
 text_file.write("WINDOW FIT;\n")
-text_file.write("EXPORT IMAGE " + working_path + filename + ".png 600;\n")
+text_file.write("EXPORT IMAGE " + FILENAME + ".png 600;\n")
 text_file.write("WRITE;\n")
 #text_file.write("QUIT;\n")
 
 text_file.close()
-
-p = subprocess.Popen(eagle_path + " -S " + working_path + filename + ".scr " + working_path + filename + ".brd",shell=False,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
