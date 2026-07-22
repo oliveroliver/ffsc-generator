@@ -14,7 +14,7 @@
     --input-bg: #12161b;
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
+  html, body { height: 100%; margin: 0; min-width: 900px; }  /* scroll rather than crush the layout on narrow windows */
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     display: flex; overflow: hidden; background: #fff;
@@ -62,6 +62,8 @@
   table.tracks tbody tr { cursor: pointer; }
   table.tracks tr.sel td { background: rgba(255,173,34,.12); }
   table.tracks tr.viol td { color: #ff8b81; }
+  table.segs input { width: 100%; min-width: 52px; padding: 2px 6px; }
+  table.segs td:first-child { color: var(--panel-muted); }
   .btn-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .btn-row button { flex: 1; white-space: nowrap; }
   .mini-note { color: var(--panel-muted); font-size: 11.5px; margin-top: 6px; line-height: 1.4; }
@@ -134,7 +136,11 @@
     <div id="error"></div>
     <div id="status"></div>
     <div id="cursorpos"></div>
-    <div id="hud"><button id="measure-btn" title="Click two points to measure. Click again to start a new measurement.">Measure</button></div>
+    <div id="hud">
+      <button id="undo-btn" title="Undo (Ctrl/Cmd+Z)">Undo</button>
+      <button id="redo-btn" title="Redo (Ctrl/Cmd+Shift+Z)">Redo</button>
+      <button id="measure-btn" title="Click two points to measure. Click again to start a new measurement.">Measure</button>
+    </div>
     <div id="track-editor"></div>
   </div>
   <div id="panel">
@@ -1235,10 +1241,18 @@ function download(filename, text) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-const export_base = () => document.getElementById('preset').value || 'ffsc-design';
+function state_matches_preset(name) {
+  const p = PRESETS[name];
+  return p && Object.keys(p).every(k => JSON.stringify(p[k]) === JSON.stringify(state[k]));
+}
+
+const export_base = () => {
+  const name = document.getElementById('preset').value;
+  return state_matches_preset(name) ? name : 'ffsc-custom';
+};
 
 /* Eagle script - byte-compatible with the original Python generator's output */
-function build_scr_text() {
+function build_scr_text(name = export_base()) {
   let t = '';
   t += '#Draws the outline of the flexible connector system;\n';
   t += 'Grid mm 1 off;\n';
@@ -1263,9 +1277,49 @@ function build_scr_text() {
     t += `RATSNEST ${net_name_prefix}${i};\n`;
   t += 'RIPUP net_reinforcement;\n';
   t += 'WINDOW FIT;\n';
-  t += `EXPORT IMAGE ${export_base()}.png 600;\n`;
+  t += `EXPORT IMAGE ${name}.png 600;\n`;
   t += 'WRITE;\n';
   return t;
+}
+
+/* ---------------------------- self-test ------------------------------- */
+/* SHA-256 of the .scr each preset must generate. Presets 1, 2, 3 and 5
+   are byte-identical to the Python generator's reference outputs in
+   examples/outputs/; parameters_4 intentionally deviates because the
+   inherited find_max_overshoot off-by-one is fixed (its asymmetric track
+   widths gave the last track an overshoot the original ignored). */
+const GOLDEN_SCR_SHA256 = {
+  parameters_1: 'fd6fa78184634cdcb5fc0cc287d348110684c056bf4e8bf1ac2c9faef060e7dc',
+  parameters_2: '7c153a37c35838cb2a0cff9470f317d15b713768b759d39b81f5f60e85b28f07',
+  parameters_3: 'a7d076cfd9bb14728e876c5fdf7b3b1cd32be9c9b846d00f3eb0ca5ff12ec842',
+  parameters_4: '4dc8c0ce6a0a573012d9a69248f74e07d70e1d829b2ba698ffd4530e0623eeb5',
+  parameters_5: 'f1fc320dde8b93ad92c2a48f038f5859fd99c1a6264a44f511f06f0c6ffdf483',
+};
+
+async function run_self_test() {
+  const saved = JSON.stringify(state);
+  const results = [];
+  try {
+    for (const [name, golden] of Object.entries(GOLDEN_SCR_SHA256)) {
+      Object.assign(state, JSON.parse(JSON.stringify(PRESETS[name])));
+      apply_params(state);
+      primitives = []; miters = []; current_polygon = null;
+      scr_lines = []; track_lengths = [];
+      override_inter_track_spacing_angle = 0;
+      output_eagle_script();
+      const text = build_scr_text(name);
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      const hex = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+      results.push({ name, pass: hex === golden });
+    }
+  } catch (e) {
+    results.push({ name: 'exception: ' + e.message, pass: false });
+  } finally {
+    Object.assign(state, JSON.parse(saved));
+    refreshPanelValues();
+    regenerate();
+  }
+  return results;
 }
 
 /* parameters file in the original parameters_x.py format */
@@ -1647,6 +1701,150 @@ ${nets}${body})
 `;
 }
 
+/* --------------------------- undo / autosave --------------------------- */
+const undoState = { stack: [], redo: [], limit: 60, suspend: false };
+
+function snapshot_state() {
+  if (undoState.suspend) return;
+  const snap = JSON.stringify(state);
+  if (undoState.stack[undoState.stack.length - 1] === snap) return;
+  undoState.stack.push(snap);
+  if (undoState.stack.length > undoState.limit) undoState.stack.shift();
+  undoState.redo.length = 0;
+  try { localStorage.setItem('ffsc-autosave', snap); } catch (e) { /* storage unavailable */ }
+}
+
+function apply_snapshot(snap) {
+  undoState.suspend = true;
+  Object.assign(state, JSON.parse(snap));
+  refreshPanelValues();
+  regenerate();
+  undoState.suspend = false;
+  updateUndoButtons();
+}
+
+function do_undo() {
+  if (undoState.stack.length < 2) return;
+  undoState.redo.push(undoState.stack.pop());
+  apply_snapshot(undoState.stack[undoState.stack.length - 1]);
+}
+
+function do_redo() {
+  if (!undoState.redo.length) return;
+  const next = undoState.redo.pop();
+  undoState.stack.push(next);
+  apply_snapshot(next);
+}
+
+function updateUndoButtons() {
+  const u = document.getElementById('undo-btn'), r = document.getElementById('redo-btn');
+  if (u) u.disabled = undoState.stack.length < 2;
+  if (r) r.disabled = !undoState.redo.length;
+}
+
+/* -------------------------- SVG etch artwork --------------------------- */
+/* True-scale SVG (1 user unit = 1 mm). Arcs are sampled to polylines at
+   ~0.05 mm chord error, which is far below etching resolution. */
+function sample_world_arc(g, step_mm = 0.05) {
+  const sweep = g.ccw ? mod2pi(g.a2 - g.a1) : -mod2pi(g.a1 - g.a2);
+  const steps = Math.max(8, Math.ceil(Math.abs(sweep) * g.r / step_mm));
+  const pts = [];
+  for (let s = 0; s <= steps; s++) {
+    const a = g.a1 + sweep * (s / steps);
+    pts.push([g.cx + g.r * Math.cos(a), g.cy + g.r * Math.sin(a)]);
+  }
+  return pts;
+}
+
+function build_svg(opts) {
+  const margin = 2;
+  const ext = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const p of primitives)
+    if (p.layer === top_layer_number || p.layer === outline_layer_number || p.type === 'via')
+      primBounds(p, ext);
+  if (ext.minX === Infinity) return '<svg xmlns="http://www.w3.org/2000/svg"/>';
+
+  const W = ext.maxX - ext.minX + 2 * margin;
+  const H = ext.maxY - ext.minY + 2 * margin;
+  const f = v => Math.round(v * 1000) / 1000;
+  const X = x => f((opts.mirror ? ext.maxX - x : x - ext.minX) + margin);
+  const Y = y => f((ext.maxY - y) + margin);
+
+  let body = '';
+  if (opts.background)
+    body += `<rect x="0" y="0" width="${f(W)}" height="${f(H)}" fill="#ffffff"/>\n`;
+
+  const polyline = (pts, width, color) =>
+    `<polyline points="${pts.map(q => X(q[0]) + ',' + Y(q[1])).join(' ')}" fill="none" stroke="${color}" stroke-width="${f(width)}" stroke-linecap="round" stroke-linejoin="round"/>\n`;
+
+  const polygon_pts = p => {
+    const pts = [];
+    for (let i = 0; i < p.points.length - 1; i++) {
+      const a = p.points[i], b = p.points[i + 1];
+      pts.push([a.x, a.y]);
+      if (a.curve) {
+        const g = solve_poly_arc(a.x, a.y, b.x, b.y, a.curve);
+        if (g) pts.push(...sample_world_arc(g).slice(1, -1));
+      }
+    }
+    return pts;
+  };
+
+  if (opts.copper) {
+    for (const p of primitives) {
+      if (p.layer !== top_layer_number) continue;
+      if (p.type === 'wire') body += polyline([[p.x1, p.y1], [p.x2, p.y2]], p.width, '#000000');
+      else if (p.type === 'arc') {
+        const g = eagleArcGeometry(p);
+        if (g) body += polyline(sample_world_arc(g), p.width, '#000000');
+      } else if (p.type === 'polygon') {
+        body += `<polygon points="${polygon_pts(p).map(q => X(q[0]) + ',' + Y(q[1])).join(' ')}" fill="#000000" stroke="#000000" stroke-width="${f(p.width)}" stroke-linejoin="round"/>\n`;
+      }
+    }
+  }
+
+  if (opts.outline) {
+    for (const p of primitives) {
+      if (p.layer !== outline_layer_number) continue;
+      if (p.type === 'wire') body += polyline([[p.x1, p.y1], [p.x2, p.y2]], p.width, opts.copper ? '#666666' : '#000000');
+      else if (p.type === 'fillet') body += polyline(sample_world_arc(p), p.width, opts.copper ? '#666666' : '#000000');
+      else if (p.type === 'arc') {
+        const g = eagleArcGeometry(p);
+        if (g) body += polyline(sample_world_arc(g), p.width, opts.copper ? '#666666' : '#000000');
+      }
+    }
+  }
+
+  if (opts.drills)
+    for (const p of primitives)
+      if (p.type === 'via')
+        body += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${f(p.drill / 2)}" fill="#ffffff"/>\n`;
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${f(W)}mm" height="${f(H)}mm" viewBox="0 0 ${f(W)} ${f(H)}">\n${body}</svg>\n`;
+}
+
+function open_print_view() {
+  const svg = build_svg({ mirror: false, copper: true, outline: true, drills: true, background: false });
+  const w = window.open('', '_blank');
+  if (!w) return;
+  w.document.write(`<!DOCTYPE html><html><head><title>FFSC 1:1 print - ${export_base()}</title><style>
+    body { font-family: -apple-system, sans-serif; margin: 10mm; }
+    .cal { width: 50mm; height: 5mm; border: 0.3mm solid #000; border-top: none; margin-top: 4mm; }
+    .note { font-size: 9pt; color: #444; }
+    svg { display: block; margin-top: 6mm; }
+    @media print { .noprint { display: none; } }
+  </style></head><body>
+    <div class="noprint">
+      <p>Print at <b>100% scale</b> - disable any "fit to page" option. The bar below must measure exactly 50&nbsp;mm.</p>
+      <button onclick="print()">Print</button>
+    </div>
+    <div class="cal"></div>
+    <div class="note">50 mm calibration bar &middot; ${export_base()}</div>
+    ${svg}
+  </body></html>`);
+  w.document.close();
+}
+
 /* ---------------------------- URL sharing ----------------------------- */
 function encode_share_hash() {
   const payload = { p: state, e: { t: electrical.thickness_um, dT: electrical.deltaT } };
@@ -1746,11 +1944,7 @@ const PRESETS = {
 const state = JSON.parse(JSON.stringify(PRESETS['parameters_1']));
 
 const GROUPS = [
-  { name: 'Segments', items: [
-    { key: 'segment_length', label: 'Segment lengths', type: 'array', focus: 'straights', tip: 'The length of each straight segment (mm). First and last are the pad ends.' },
-    { key: 'segment_angle', label: 'Segment angles', type: 'array', focus: 'bends', tip: 'The angle of each join / curved section (degrees). One fewer than lengths. 0 = straight join.' },
-    { key: 'segment_inner_radius', label: 'Bend inner radii', type: 'array', focus: 'bends', tip: 'The inner radius of each curved join (mm). One fewer than lengths.' },
-  ]},
+  { name: 'Segments', items: [] },   // rendered as a table by rebuildSegmentTable()
   { name: 'Tracks', items: [
     { key: 'track_widths', label: 'Track widths', type: 'array', focus: 'traces', tip: 'The width of each track (mm). One entry per connection.' },
     { key: 'inter_track_spacing_straight', label: 'Spacing (straight)', step: 0.05, min: 0.01, focus: 'traces', tip: 'Track-to-track spacing on straight parts of the connection.' },
@@ -1844,7 +2038,10 @@ function buildPanel() {
   fsView.appendChild(isoRow);
   controls.appendChild(fsView);
 
-  for (const group of GROUPS) {
+  for (const group of GROUPS) buildGroup(group);
+  rebuildSegmentTable();
+
+  function buildGroup(group) {
     const fs = document.createElement('fieldset');
     const lg = document.createElement('legend');
     lg.textContent = group.name;
@@ -1904,6 +2101,14 @@ function buildPanel() {
     }
 
     if (group.name === 'Segments') {
+      const wrap = document.createElement('div');
+      wrap.id = 'segment-table-wrap';
+      fs.appendChild(wrap);
+      const note = document.createElement('div');
+      note.className = 'mini-note';
+      note.textContent = 'Angle and radius describe the bend after each segment. First and last segments are the pad ends.';
+      fs.appendChild(note);
+
       const br = document.createElement('div');
       br.className = 'btn-row';
       const add = document.createElement('button');
@@ -1988,9 +2193,38 @@ function buildExportPanel() {
     'KiCad 6+ board. Pads export as net-connected zones - press B in KiCad to pour them. Reinforcement is on F.Adhes.');
   section('Parameters', mk('Download .py', () => download('parameters_export.py', build_py_text())),
     'Parameter file in the original parameters_x.py format, ready for the Python generator.');
+  const fsEtch = section('Etch artwork', mk('Copper mask .svg (mirrored)', () => download(export_base() + '-mask.svg', build_svg({ mirror: true, copper: true, drills: true, background: true }))),
+    'True-scale artwork for toner-transfer or photoresist etching: black copper on white, mirrored for face-down transfer, with white drill centres. Print at 100%.');
+  const etchRow = document.createElement('div');
+  etchRow.className = 'btn-row';
+  etchRow.append(
+    mk('Outline .svg', () => download(export_base() + '-outline.svg', build_svg({ mirror: false, outline: true, background: false }))),
+    mk('Print 1:1', () => open_print_view()),
+  );
+  fsEtch.insertBefore(etchRow, fsEtch.lastChild);
+
   const shareBtn = mk('Copy share link', () => copy_share_link(shareBtn));
   section('Share', shareBtn,
     'Copies a URL with the whole design encoded in it. The address bar also stays up to date as you edit, so a bookmark captures the current design.');
+
+  const testBtn = mk('Run self-test', async () => {
+    testBtn.disabled = true;
+    testBtn.textContent = 'Running…';
+    const results = await run_self_test();
+    const passed = results.filter(r => r.pass).length;
+    const out = document.getElementById('selftest-out');
+    out.textContent = results.map(r => `${r.pass ? '✓' : '✕'} ${r.name}`).join('\n');
+    out.style.color = passed === results.length ? '#7ee2a8' : '#ff8b81';
+    testBtn.disabled = false;
+    testBtn.textContent = 'Run self-test';
+  });
+  const fsTest = section('Self-test', testBtn,
+    'Regenerates all five presets and verifies the Eagle script output is byte-for-byte what it should be (SHA-256). Run after changing the generator code.');
+  const out = document.createElement('div');
+  out.id = 'selftest-out';
+  out.className = 'mini-note';
+  out.style.whiteSpace = 'pre-line';
+  fsTest.insertBefore(out, fsTest.lastChild);
 }
 
 function buildAppearancePanel() {
@@ -2236,7 +2470,14 @@ function renderTracksTab() {
 /* Geometric feasibility checks the original generator never did - it would
    silently emit broken geometry. Estimates reuse the generator's own maths,
    ignoring the symmetry redistribution, so taper figures are approximate. */
-const drc = { enabled: true, findings: [] };
+const drc = { enabled: true, findings: [], minTrack: 0.15, minClearance: 0.15 };
+
+function dist_point_segment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2)) : 0;
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
 
 /* lowest y (segment-local) that any track's taper reaches in an end segment;
    negative means the taper needs more room than the segment provides and the
@@ -2352,6 +2593,46 @@ function run_drc() {
       warn(`Bend ${a}: inner radius ${segment_inner_radius[a]} mm leaves no room for the board edge (needs > ${(track_to_edge_spacing + w / 2).toFixed(2)} mm)`, loc, fixBend);
   }
 
+  // manufacturing limits
+  const thin = [];
+  for (let i = 0; i < n; i++)
+    if (track_widths[i] < drc.minTrack - 1e-9) thin.push(i);
+  if (thin.length)
+    warn(`${thin.length} track(s) narrower than the ${drc.minTrack} mm minimum width (track${thin.length > 1 ? 's' : ''} ${thin.join(', ')})`);
+  if (inter_track_spacing_straight < drc.minClearance - 1e-9)
+    warn(`Straight track spacing ${inter_track_spacing_straight} mm is below the ${drc.minClearance} mm minimum clearance`);
+  if (inter_track_spacing_angle < drc.minClearance - 1e-9)
+    warn(`Taper track spacing ${inter_track_spacing_angle} mm is below the ${drc.minClearance} mm minimum clearance`);
+  if (inter_pad_spacing < drc.minClearance - 1e-9)
+    warn(`Pad spacing ${inter_pad_spacing} mm is below the ${drc.minClearance} mm minimum clearance`);
+
+  // copper tracks passing too close to pads of other nets - measured on the
+  // generated geometry itself, so this is exact (unlike the taper estimate)
+  {
+    const pads = primitives.filter(p => p.type === 'polygon' && p.layer === top_layer_number);
+    const wires = primitives.filter(p => p.type === 'wire' && p.layer === top_layer_number);
+    const segDist = (a1, a2, b1, b2) => Math.min(
+      dist_point_segment(a1[0], a1[1], b1[0], b1[1], b2[0], b2[1]),
+      dist_point_segment(a2[0], a2[1], b1[0], b1[1], b2[0], b2[1]),
+      dist_point_segment(b1[0], b1[1], a1[0], a1[1], a2[0], a2[1]),
+      dist_point_segment(b2[0], b2[1], a1[0], a1[1], a2[0], a2[1]));
+    let worst = { clear: Infinity };
+    for (const w of wires) {
+      for (const pad of pads) {
+        if (pad.net === w.net) continue;
+        for (let i = 0; i < pad.points.length - 1; i++) {
+          const e1 = pad.points[i], e2 = pad.points[i + 1];
+          const dist = segDist([w.x1, w.y1], [w.x2, w.y2], [e1.x, e1.y], [e2.x, e2.y]);
+          const clear = dist - w.width / 2 - pad.width / 2;
+          if (clear < worst.clear)
+            worst = { clear, wireNet: w.net, padNet: pad.net, x: (w.x1 + w.x2) / 2, y: (w.y1 + w.y2) / 2 };
+        }
+      }
+    }
+    if (worst.clear < drc.minClearance - 1e-9)
+      warn(`Track ${worst.wireNet} passes ${Math.max(0, worst.clear).toFixed(2)} mm from pad ${worst.padNet} (min clearance ${drc.minClearance} mm)`, [worst.x, worst.y]);
+  }
+
   // the outline should chain into a closed loop
   if (!build_outline_loop())
     warn('Board outline does not form a closed loop - check segment lengths and angles');
@@ -2428,6 +2709,28 @@ function buildDRCPanel() {
   row.append(label, cb);
   fs.appendChild(row);
 
+  const limitRow = (labelText, key, tip) => {
+    const r = document.createElement('div');
+    r.className = 'row';
+    const l = document.createElement('label');
+    l.textContent = labelText;
+    l.title = tip;
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = 0.05; inp.min = 0.05;
+    inp.value = drc[key];
+    inp.id = 'in_drc_' + key;
+    l.htmlFor = inp.id;
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      if (isFinite(v) && v > 0) { drc[key] = v; renderDRC(); }
+    });
+    r.append(l, inp);
+    fs.appendChild(r);
+  };
+  limitRow('Min track width (mm)', 'minTrack', 'Warn about tracks narrower than your process can make.');
+  limitRow('Min clearance (mm)', 'minClearance', 'Warn about copper-to-copper gaps smaller than your process can etch.');
+
   const list = document.createElement('div');
   list.id = 'drc-list';
   fs.appendChild(list);
@@ -2451,6 +2754,63 @@ function showTab(which) {
 for (const name of Object.keys(TABS))
   document.getElementById('tab-' + name).addEventListener('click', () => showTab(name));
 
+function rebuildSegmentTable() {
+  const wrap = document.getElementById('segment-table-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+
+  const table = document.createElement('table');
+  table.className = 'tracks segs';
+  table.innerHTML = '<thead><tr><th>#</th><th>Length</th><th>Bend °</th><th>Radius</th></tr></thead>';
+  const tb = document.createElement('tbody');
+
+  const cell = (tr, child) => {
+    const td = document.createElement('td');
+    if (child) td.appendChild(child); else td.textContent = '—';
+    tr.appendChild(td);
+    return td;
+  };
+  let segInputId = 0;
+  const num = (value, step, tag, oncommit) => {
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = step;
+    inp.value = value;
+    inp.id = 'seg_' + (segInputId++);
+    inp.setAttribute('aria-label', 'segment parameter');
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      if (!isFinite(v)) { inp.classList.add('bad'); return; }
+      inp.classList.remove('bad');
+      oncommit(v);
+      regenerate();
+    });
+    if (tag) {
+      inp.addEventListener('focus', () => { if (isolate_on_hover) setFocusTag(tag); });
+      inp.addEventListener('blur', () => setFocusTag(null));
+    }
+    return inp;
+  };
+
+  for (let i = 0; i < state.segment_length.length; i++) {
+    const tr = document.createElement('tr');
+    const idx = document.createElement('td');
+    idx.textContent = i;
+    tr.appendChild(idx);
+    cell(tr, num(state.segment_length[i], 1, 'straights', v => { state.segment_length[i] = v; }));
+    if (i < state.segment_length.length - 1) {
+      cell(tr, num(state.segment_angle[i], 5, 'bends', v => { state.segment_angle[i] = v; }));
+      cell(tr, num(state.segment_inner_radius[i], 0.5, 'bends', v => { state.segment_inner_radius[i] = v; }));
+    } else {
+      cell(tr, null);
+      cell(tr, null);
+    }
+    tb.appendChild(tr);
+  }
+  table.appendChild(tb);
+  wrap.appendChild(table);
+}
+
 function refreshPanelValues() {
   for (const group of GROUPS) {
     for (const item of group.items) {
@@ -2462,6 +2822,7 @@ function refreshPanelValues() {
       else input.value = state[item.key];
     }
   }
+  rebuildSegmentTable();
 }
 
 /* ------------------------------ generation ---------------------------- */
@@ -2498,6 +2859,8 @@ function regenerate() {
 
     errorBox.style.display = 'none';
     encode_share_hash();
+    snapshot_state();
+    updateUndoButtons();
     render();
     renderTracksTab();
     renderDRC();
@@ -2578,19 +2941,23 @@ function showTrackEditor(i, clientX, clientY) {
   inp.value = state.track_widths[i];
   inp.id = 'te-width';
   l.htmlFor = inp.id;
+
+  const info = document.createElement('div');
+  info.className = 'mini-note';
+  const updateInfo = () => {
+    info.textContent = `L ${(track_lengths[i] || 0).toFixed(1)} mm · R ${(track_resistance(i) * 1000).toFixed(1)} mΩ · Imax ${track_imax(state.track_widths[i]).toFixed(2)} A`;
+  };
+  updateInfo();
+
   inp.addEventListener('input', () => {
     const v = parseFloat(inp.value);
     if (!isFinite(v) || v <= 0) return;
     state.track_widths[i] = v;
     refreshPanelValues();
     regenerate();
+    updateInfo();
   });
   row.append(l, inp);
-
-  const info = document.createElement('div');
-  info.className = 'mini-note';
-  const L = track_lengths[i] || 0;
-  info.textContent = `L ${L.toFixed(1)} mm · R ${(track_resistance(i) * 1000).toFixed(1)} mΩ · Imax ${track_imax(state.track_widths[i]).toFixed(2)} A`;
 
   const removeBtn = document.createElement('button');
   removeBtn.className = 'danger';
@@ -2674,6 +3041,16 @@ canvas.addEventListener('pointerup', e => {
   if (wasClick) handleCanvasClick(e);
 });
 
+document.getElementById('undo-btn').addEventListener('click', do_undo);
+document.getElementById('redo-btn').addEventListener('click', do_redo);
+document.addEventListener('keydown', e => {
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;  // keep native input undo
+  e.preventDefault();
+  if (e.shiftKey) do_redo(); else do_undo();
+});
+
 const measureBtn = document.getElementById('measure-btn');
 measureBtn.addEventListener('click', () => {
   measure.active = !measure.active;
@@ -2724,6 +3101,12 @@ if (shared) {
     if (shared.e.t > 0) electrical.thickness_um = shared.e.t;
     if (shared.e.dT > 0) electrical.deltaT = shared.e.dT;
   }
+} else {
+  // no shared design in the URL - restore the last session's autosave
+  try {
+    const auto = localStorage.getItem('ffsc-autosave');
+    if (auto) Object.assign(state, JSON.parse(auto));
+  } catch (e) { /* corrupt or unavailable - start from the default preset */ }
 }
 buildPanel();
 buildTracksPanel();
