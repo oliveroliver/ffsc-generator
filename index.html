@@ -170,8 +170,22 @@
 'use strict';
 
 /* =====================================================================
- *  FFSC (Flat Flexible Soldered Connector) Generator
- *  JavaScript port of ffsc-generator.py (GPLv3, Copyright (C) 2016 Oliver S)
+ *  FFSC (Flat Flexible Soldered Connector) Generator - browser version
+ *  JavaScript port of ffsc-generator.py
+ *  Copyright (C) 2016-2026 Oliver S
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  *  Function names follow the original Python. Instead of writing an Eagle
  *  script, the leaf draw_* functions append primitives to a display list
@@ -2513,6 +2527,49 @@ function fix_taper_overrun(seg) {
   regenerate();
 }
 
+/* worst clearance between copper wires and pads of other nets, measured
+   on the generated primitives (negative = overlap / short) */
+function worst_pad_clearance() {
+  const pads = primitives.filter(p => p.type === 'polygon' && p.layer === top_layer_number);
+  const wires = primitives.filter(p => p.type === 'wire' && p.layer === top_layer_number);
+  const segDist = (a1, a2, b1, b2) => Math.min(
+    dist_point_segment(a1[0], a1[1], b1[0], b1[1], b2[0], b2[1]),
+    dist_point_segment(a2[0], a2[1], b1[0], b1[1], b2[0], b2[1]),
+    dist_point_segment(b1[0], b1[1], a1[0], a1[1], a2[0], a2[1]),
+    dist_point_segment(b2[0], b2[1], a1[0], a1[1], a2[0], a2[1]));
+  let worst = { clear: Infinity };
+  for (const w of wires) {
+    for (const pad of pads) {
+      if (pad.net === w.net) continue;
+      for (let i = 0; i < pad.points.length - 1; i++) {
+        const e1 = pad.points[i], e2 = pad.points[i + 1];
+        const dist = segDist([w.x1, w.y1], [w.x2, w.y2], [e1.x, e1.y], [e2.x, e2.y]);
+        const clear = dist - w.width / 2 - pad.width / 2;
+        if (clear < worst.clear)
+          worst = { clear, wireNet: w.net, padNet: pad.net, x: (w.x1 + w.x2) / 2, y: (w.y1 + w.y2) / 2 };
+      }
+    }
+  }
+  return worst;
+}
+
+/* raise additional_track_from_pad_length towards 0 until the pad clearance
+   is met (or it reaches 0 - any remaining violation has another cause) */
+function fix_track_from_pad() {
+  for (let pass = 0; pass < 40 && state.additional_track_from_pad_length < 0; pass++) {
+    apply_params(state);
+    primitives = []; miters = []; current_polygon = null;
+    scr_lines = []; track_lengths = [];
+    override_inter_track_spacing_angle = 0;
+    try { output_eagle_script(); } catch (e) { break; }
+    if (worst_pad_clearance().clear >= drc.minClearance) break;
+    state.additional_track_from_pad_length = Math.min(0,
+      Math.round((state.additional_track_from_pad_length + 0.25) * 100) / 100);
+  }
+  refreshPanelValues();
+  regenerate();
+}
+
 function run_drc() {
   const findings = [];
   const n = track_widths.length;
@@ -2607,30 +2664,19 @@ function run_drc() {
     warn(`Pad spacing ${inter_pad_spacing} mm is below the ${drc.minClearance} mm minimum clearance`);
 
   // copper tracks passing too close to pads of other nets - measured on the
-  // generated geometry itself, so this is exact (unlike the taper estimate)
+  // generated geometry itself, so this is exact (unlike the taper estimate).
+  // A common cause is a too-negative track-from-pad value, which pulls the
+  // taper start up between (and eventually across) the pads - offer raising
+  // it as the fix when it is negative.
   {
-    const pads = primitives.filter(p => p.type === 'polygon' && p.layer === top_layer_number);
-    const wires = primitives.filter(p => p.type === 'wire' && p.layer === top_layer_number);
-    const segDist = (a1, a2, b1, b2) => Math.min(
-      dist_point_segment(a1[0], a1[1], b1[0], b1[1], b2[0], b2[1]),
-      dist_point_segment(a2[0], a2[1], b1[0], b1[1], b2[0], b2[1]),
-      dist_point_segment(b1[0], b1[1], a1[0], a1[1], a2[0], a2[1]),
-      dist_point_segment(b2[0], b2[1], a1[0], a1[1], a2[0], a2[1]));
-    let worst = { clear: Infinity };
-    for (const w of wires) {
-      for (const pad of pads) {
-        if (pad.net === w.net) continue;
-        for (let i = 0; i < pad.points.length - 1; i++) {
-          const e1 = pad.points[i], e2 = pad.points[i + 1];
-          const dist = segDist([w.x1, w.y1], [w.x2, w.y2], [e1.x, e1.y], [e2.x, e2.y]);
-          const clear = dist - w.width / 2 - pad.width / 2;
-          if (clear < worst.clear)
-            worst = { clear, wireNet: w.net, padNet: pad.net, x: (w.x1 + w.x2) / 2, y: (w.y1 + w.y2) / 2 };
-        }
-      }
-    }
-    if (worst.clear < drc.minClearance - 1e-9)
-      warn(`Track ${worst.wireNet} passes ${Math.max(0, worst.clear).toFixed(2)} mm from pad ${worst.padNet} (min clearance ${drc.minClearance} mm)`, [worst.x, worst.y]);
+    const worst = worst_pad_clearance();
+    const fixPad = state.additional_track_from_pad_length < 0
+      ? { label: 'Raise track-from-pad', apply: fix_track_from_pad }
+      : undefined;
+    if (worst.clear < 0)
+      err(`Track ${worst.wireNet} crosses pad ${worst.padNet} by ${(-worst.clear).toFixed(2)} mm - short circuit`, [worst.x, worst.y], fixPad);
+    else if (worst.clear < drc.minClearance - 1e-9)
+      warn(`Track ${worst.wireNet} passes ${worst.clear.toFixed(2)} mm from pad ${worst.padNet} (min clearance ${drc.minClearance} mm)`, [worst.x, worst.y], fixPad);
   }
 
   // the outline should chain into a closed loop
