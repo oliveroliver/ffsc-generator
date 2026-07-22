@@ -1,0 +1,2737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FFSC Generator</title>
+<style>
+  :root {
+    --panel-bg: #1c2128;
+    --panel-fg: #d7dde4;
+    --panel-muted: #8b98a5;
+    --panel-border: #313a44;
+    --accent: #ffad22;
+    --input-bg: #12161b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex; overflow: hidden; background: #fff;
+  }
+  #canvas-wrap { position: relative; flex: 1; min-width: 0; }
+  #board { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+  #board.panning { cursor: grabbing; }
+  #error {
+    position: absolute; top: 12px; left: 12px; right: 12px; z-index: 3;
+    background: #b3261e; color: #fff; padding: 8px 12px; border-radius: 6px;
+    font-size: 13px; display: none; white-space: pre-wrap;
+  }
+  #status {
+    position: absolute; left: 12px; bottom: 10px; z-index: 2;
+    font-size: 12px; color: #5b6b7a; background: rgba(255,255,255,.85);
+    padding: 3px 8px; border-radius: 4px; pointer-events: none;
+  }
+  #cursorpos {
+    position: absolute; right: 12px; bottom: 10px; z-index: 2;
+    font-size: 12px; color: #5b6b7a; background: rgba(255,255,255,.85);
+    padding: 3px 8px; border-radius: 4px; pointer-events: none;
+    font-variant-numeric: tabular-nums;
+  }
+  #hud { position: absolute; top: 12px; right: 12px; z-index: 2; display: flex; gap: 6px; }
+  #hud button {
+    background: rgba(28,33,40,.92); color: #d7dde4;
+    border: 1px solid #313a44; border-radius: 5px; padding: 5px 10px; font-size: 13px;
+  }
+  #hud button.active { border-color: var(--accent); color: #fff; }
+  #track-editor {
+    position: absolute; z-index: 4; display: none;
+    background: var(--panel-bg); color: var(--panel-fg);
+    border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px 12px;
+    font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.35); min-width: 170px;
+  }
+  #track-editor .te-head { display: flex; justify-content: space-between; gap: 16px; align-items: center; font-weight: 600; }
+  #track-editor .te-head button { border: none; background: none; color: var(--panel-muted); padding: 0 2px; font-size: 15px; }
+  #track-editor .row { margin-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  #track-editor input[type="number"] { width: 74px; }
+  #track-editor button.danger { border-color: #8a3a34; color: #ff8b81; width: 100%; margin-top: 8px; }
+  table.tracks { width: 100%; border-collapse: collapse; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  table.tracks th, table.tracks td { text-align: right; padding: 3px 4px; border-bottom: 1px solid var(--panel-border); font-size: 12px; }
+  table.tracks th { color: var(--panel-muted); font-weight: 600; }
+  table.tracks td:first-child, table.tracks th:first-child { text-align: left; }
+  table.tracks tbody tr { cursor: pointer; }
+  table.tracks tr.sel td { background: rgba(255,173,34,.12); }
+  table.tracks tr.viol td { color: #ff8b81; }
+  .btn-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .btn-row button { flex: 1; white-space: nowrap; }
+  .mini-note { color: var(--panel-muted); font-size: 11.5px; margin-top: 6px; line-height: 1.4; }
+  #panel {
+    width: 368px; flex: none; background: var(--panel-bg); color: var(--panel-fg);
+    overflow-y: auto; border-left: 1px solid var(--panel-border);
+    font-size: 13px;
+  }
+  #panel header {
+    padding: 14px 16px 10px; border-bottom: 1px solid var(--panel-border);
+    position: sticky; top: 0; background: var(--panel-bg); z-index: 1;
+  }
+  #panel h1 { font-size: 15px; margin: 0 0 2px; color: #fff; }
+  #panel header p { margin: 0; font-size: 11.5px; color: var(--panel-muted); }
+  .preset-row { display: flex; gap: 8px; margin-top: 10px; }
+  .preset-row select { flex: 1; }
+  .tabs { display: flex; gap: 5px; margin-top: 10px; }
+  .tabs button {
+    flex: 1; background: transparent; border: 1px solid var(--panel-border);
+    padding: 5px 0; color: var(--panel-muted); font-size: 12.5px; white-space: nowrap;
+  }
+  .tabs button.active { background: var(--input-bg); border-color: var(--accent); color: #fff; }
+  .tabs button.drc-warn { color: var(--accent); }
+  .tabs button.drc-err { color: #ff8b81; }
+  .drc-item {
+    display: flex; gap: 8px; align-items: baseline;
+    padding: 7px 4px; border-bottom: 1px solid var(--panel-border);
+    font-size: 12.5px; line-height: 1.4; cursor: default;
+  }
+  .drc-item.loc { cursor: pointer; }
+  .drc-item.loc:hover { background: rgba(255,255,255,.04); }
+  .drc-item .lvl { font-weight: 700; flex: none; }
+  .drc-item.err .lvl { color: #ff8b81; }
+  .drc-item.warn .lvl { color: var(--accent); }
+  .drc-ok { color: #7ee2a8; padding: 8px 4px; font-size: 12.5px; }
+  .drc-fix {
+    margin-left: auto; flex: none; font-size: 11.5px; padding: 2px 9px;
+    border-color: var(--accent); color: var(--accent);
+  }
+  fieldset {
+    border: none; margin: 0; padding: 10px 16px 12px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  legend {
+    font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--accent); padding: 0; margin-bottom: 2px;
+  }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 7px; }
+  .row label { flex: 1; color: var(--panel-fg); cursor: help; }
+  .row input[type="number"] { width: 88px; }
+  .row.wide { flex-direction: column; align-items: stretch; gap: 4px; }
+  .row.wide label { cursor: help; }
+  input, select, button {
+    font: inherit; color: var(--panel-fg); background: var(--input-bg);
+    border: 1px solid var(--panel-border); border-radius: 5px; padding: 4px 8px;
+  }
+  input:focus, select:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+  input.bad { border-color: #e5534b; outline: 1px solid #e5534b; }
+  input[type="checkbox"] { width: auto; accent-color: var(--accent); }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .toggles { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .toggles label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+</style>
+</head>
+<body>
+  <div id="canvas-wrap">
+    <canvas id="board"></canvas>
+    <div id="error"></div>
+    <div id="status"></div>
+    <div id="cursorpos"></div>
+    <div id="hud"><button id="measure-btn" title="Click two points to measure. Click again to start a new measurement.">Measure</button></div>
+    <div id="track-editor"></div>
+  </div>
+  <div id="panel">
+    <header>
+      <h1>FFSC Generator</h1>
+      <p>Flat Flexible Soldered Connector &mdash; live preview. All units mm.</p>
+      <div class="preset-row">
+        <select id="preset"></select>
+        <button id="fit" title="Fit board to view (or double-click canvas)">Fit</button>
+      </div>
+      <div class="tabs">
+        <button id="tab-design" class="active">Design</button>
+        <button id="tab-tracks">Tracks</button>
+        <button id="tab-drc">DRC</button>
+        <button id="tab-appearance">Style</button>
+        <button id="tab-export">Export</button>
+      </div>
+    </header>
+    <div id="controls"></div>
+    <div id="tracks-controls" style="display:none"></div>
+    <div id="drc-controls" style="display:none"></div>
+    <div id="appearance-controls" style="display:none"></div>
+    <div id="export-controls" style="display:none"></div>
+  </div>
+
+<script>
+'use strict';
+
+/* =====================================================================
+ *  FFSC (Flat Flexible Soldered Connector) Generator
+ *  JavaScript port of ffsc-generator.py (GPLv3, Copyright (C) 2016 Oliver S)
+ *
+ *  Function names follow the original Python. Instead of writing an Eagle
+ *  script, the leaf draw_* functions append primitives to a display list
+ *  which is rendered to <canvas> in real time.
+ * ===================================================================== */
+
+/* ------------------------- parameters (globals) ---------------------- */
+/* Layer numbers are fixed in this port; they only select drawing style. */
+const top_layer_number = 16;
+const outline_layer_number = 20;
+const reinforcement_layer_number = 1;
+const net_name_prefix = 'net_';
+
+let polygon_draw_width, outline_corner_radius, outline_angle_radius, outline_draw_width,
+    triangles_across_width, triangle_height, taper_distance_from_edge, pad_arc_height,
+    distance_arc_from_edge, track_to_edge_spacing, inter_track_spacing_straight,
+    inter_track_spacing_angle, symmetry_on_shape, inter_pad_spacing, minimum_pad_width,
+    pad_width_to_track_ratio, pad_length_to_max_track_ratio, additional_track_from_pad_length,
+    preferred_via_drill_size, minimum_via_to_pad_edge, via_annular_ring, gradient_of_taper,
+    segment_length, segment_angle, segment_inner_radius, track_widths;
+
+let override_inter_track_spacing_angle = 0;
+
+function apply_params(p) {
+  polygon_draw_width = p.polygon_draw_width;
+  outline_corner_radius = p.outline_corner_radius;
+  outline_angle_radius = p.outline_angle_radius;
+  outline_draw_width = p.outline_draw_width;
+  triangles_across_width = p.triangles_across_width;
+  triangle_height = p.triangle_height;
+  taper_distance_from_edge = p.taper_distance_from_edge;
+  pad_arc_height = p.pad_arc_height;
+  distance_arc_from_edge = p.distance_arc_from_edge;
+  track_to_edge_spacing = p.track_to_edge_spacing;
+  inter_track_spacing_straight = p.inter_track_spacing_straight;
+  inter_track_spacing_angle = p.inter_track_spacing_angle;
+  symmetry_on_shape = p.symmetry_on_shape;
+  inter_pad_spacing = p.inter_pad_spacing;
+  minimum_pad_width = p.minimum_pad_width;
+  pad_width_to_track_ratio = p.pad_width_to_track_ratio;
+  pad_length_to_max_track_ratio = p.pad_length_to_max_track_ratio;
+  additional_track_from_pad_length = p.additional_track_from_pad_length;
+  preferred_via_drill_size = p.preferred_via_drill_size;
+  minimum_via_to_pad_edge = p.minimum_via_to_pad_edge;
+  via_annular_ring = p.via_annular_ring;
+  gradient_of_taper = p.gradient_of_taper;
+  segment_length = p.segment_length.slice();
+  segment_angle = p.segment_angle.slice();
+  segment_inner_radius = p.segment_inner_radius.slice();
+  track_widths = p.track_widths.slice();
+}
+
+/* ----------------------------- display list -------------------------- */
+let primitives = [];        // wires, arcs, polygons, fillets, vias
+let miters = [];            // pending MITER commands, applied after generation
+let current_polygon = null;
+let scr_lines = [];         // Eagle script text, emitted alongside the primitives
+let track_lengths = [];     // per-connection copper length in mm, accumulated during generation
+
+const rad = d => d * Math.PI / 180;
+
+/* Python's '%.6g' equivalent, as used by the original generator */
+const g6 = x => String(Number(Number(x).toPrecision(6)));
+const g6s = x => (x >= 0 ? '+' : '') + g6(x);
+
+const net_index = signal_name => (/^\d+$/.test(signal_name) ? parseInt(signal_name, 10) : null);
+
+function add_track_length(signal_name, layer_number, mm) {
+  const i = net_index(signal_name);
+  if (i === null || layer_number !== top_layer_number) return;
+  track_lengths[i] = (track_lengths[i] || 0) + mm;
+}
+
+/* rotates a point around a point */
+function rotate_2d(degrees, point_x, point_y, origin_x, origin_y) {
+  degrees *= -1;
+
+  const x = point_x - origin_x;
+  const y = point_y - origin_y;
+
+  let new_x = (x * Math.cos(rad(degrees))) - (y * Math.sin(rad(degrees)));
+  let new_y = (x * Math.sin(rad(degrees))) + (y * Math.cos(rad(degrees)));
+
+  new_x += origin_x;
+  new_y += origin_y;
+
+  return [new_x, new_y];
+}
+
+/* starts, continues or finishes a polygon (Eagle POLYGON equivalent).
+   state 0 = first point, 1 = mid point, 2 = end point.
+   radius: 0 = straight segment to the next point, otherwise the arc
+   diameter (2R) for that segment; sign picks the bulge side. */
+function draw_part_poly_eagle(signal_name, layer_number, width, poly_point_x, poly_point_y, radius, state) {
+  if (state === 0) {
+    current_polygon = { type: 'polygon', signal: net_name_prefix + signal_name, net: net_index(signal_name),
+                        layer: layer_number, width: width, points: [] };
+    current_polygon.points.push({ x: poly_point_x, y: poly_point_y, curve: radius });
+    scr_lines.push(`LAYER ${layer_number};\n`);
+    scr_lines.push(`POLYGON ${net_name_prefix}${signal_name} ${g6(width)} (${g6(poly_point_x)} ${g6(poly_point_y)}) @${g6s(radius)} `);
+  } else if (state === 1) {
+    current_polygon.points.push({ x: poly_point_x, y: poly_point_y, curve: radius });
+    scr_lines.push(`(${g6(poly_point_x)} ${g6(poly_point_y)}) @${g6s(radius)} `);
+  } else {
+    current_polygon.points.push({ x: poly_point_x, y: poly_point_y, curve: 0 });
+    primitives.push(current_polygon);
+    current_polygon = null;
+    scr_lines.push(`(${g6(poly_point_x)} ${g6(poly_point_y)});\n`);
+  }
+}
+
+function draw_part_poly_transform(segment_number, signal_name, layer_number, width, poly_point_x, poly_point_y, radius, state) {
+  [poly_point_x, poly_point_y] = calc_new_point(segment_number, poly_point_x, poly_point_y);
+  draw_part_poly_eagle(signal_name, layer_number, width, poly_point_x, poly_point_y, radius, state);
+}
+
+/* a rectangle drawn as a poly, with transform included */
+function draw_rect_poly_transform(segment_number, signal_name, layer_number, width, pad_start_x, pad_start_y, pad_finish_x, pad_finish_y) {
+  draw_part_poly_transform(segment_number, signal_name, layer_number, width, pad_start_x + (polygon_draw_width / 2), pad_start_y + (polygon_draw_width / 2), 0, 0);
+  draw_part_poly_transform(segment_number, signal_name, layer_number, width, pad_finish_x - (polygon_draw_width / 2), pad_start_y + (polygon_draw_width / 2), 0, 1);
+  draw_part_poly_transform(segment_number, signal_name, layer_number, width, pad_finish_x - (polygon_draw_width / 2), pad_finish_y - (polygon_draw_width / 2), 0, 1);
+  draw_part_poly_transform(segment_number, signal_name, layer_number, width, pad_start_x + (polygon_draw_width / 2), pad_finish_y - (polygon_draw_width / 2), 0, 1);
+  draw_part_poly_transform(segment_number, signal_name, layer_number, width, pad_start_x + (polygon_draw_width / 2), pad_start_y + (polygon_draw_width / 2), 0, 2);
+}
+
+/* draws a trace (Eagle WIRE equivalent) */
+function draw_wire(signal_name, layer_number, wire_width, wire_start_x, wire_start_y, wire_finish_x, wire_finish_y) {
+  primitives.push({ type: 'wire', signal: net_name_prefix + signal_name, net: net_index(signal_name), layer: layer_number,
+                    width: wire_width, x1: wire_start_x, y1: wire_start_y, x2: wire_finish_x, y2: wire_finish_y });
+  scr_lines.push(`LAYER ${layer_number};\n`);
+  scr_lines.push(`WIRE '${net_name_prefix}${signal_name}' ${g6(wire_width)} (${g6(wire_start_x)} ${g6(wire_start_y)}) (${g6(wire_finish_x)} ${g6(wire_finish_y)});\n`);
+  add_track_length(signal_name, layer_number, Math.hypot(wire_finish_x - wire_start_x, wire_finish_y - wire_start_y));
+}
+
+function draw_wire_transform(segment_number, signal_name, layer_number, wire_width, wire_start_x, wire_start_y, wire_finish_x, wire_finish_y) {
+  [wire_start_x, wire_start_y] = calc_new_point(segment_number, wire_start_x, wire_start_y);
+  [wire_finish_x, wire_finish_y] = calc_new_point(segment_number, wire_finish_x, wire_finish_y);
+
+  draw_wire(signal_name, layer_number, wire_width, wire_start_x, wire_start_y, wire_finish_x, wire_finish_y);
+}
+
+/* place a via (Eagle VIA equivalent) */
+function draw_via(signal_name, via_diameter, drill_diameter, layer_range, via_position_x, via_position_y) {
+  primitives.push({ type: 'via', signal: net_name_prefix + signal_name,
+                    diameter: via_diameter, drill: drill_diameter, x: via_position_x, y: via_position_y });
+  scr_lines.push(`CHANGE DRILL ${g6(drill_diameter)};\n`);
+  scr_lines.push(`VIA '${net_name_prefix}${signal_name}' ${g6(via_diameter)} Round ${layer_range} (${g6(via_position_x)} ${g6(via_position_y)});\n`);
+}
+
+function draw_via_transform(segment_number, signal_name, via_diameter, drill_diameter, layer_range, via_position_x, via_position_y) {
+  [via_position_x, via_position_y] = calc_new_point(segment_number, via_position_x, via_position_y);
+  draw_via(signal_name, via_diameter, drill_diameter, layer_range, via_position_x, via_position_y);
+}
+
+/* draws an arc (Eagle ARC equivalent): start point, the point diametrically
+   opposite the start (defines the circle), and the point giving the end angle */
+function draw_arc(signal_name, layer_number, wire_width, clockwise, arc_start_x, arc_start_y, arc_diameter_x, arc_diameter_y, arc_finish_x, arc_finish_y) {
+  const p = { type: 'arc', signal: net_name_prefix + signal_name, net: net_index(signal_name), layer: layer_number,
+              width: wire_width, clockwise: clockwise,
+              x1: arc_start_x, y1: arc_start_y, dx: arc_diameter_x, dy: arc_diameter_y,
+              x2: arc_finish_x, y2: arc_finish_y };
+  primitives.push(p);
+  const clockwise_verbose = clockwise === true ? 'CW' : 'CCW';
+  scr_lines.push(`LAYER ${layer_number}\n`);   // (sic - the original generator omits the semicolon here)
+  scr_lines.push(`ARC '${net_name_prefix}${signal_name}' ${clockwise_verbose} ROUND ${g6(wire_width)} (${g6(arc_start_x)} ${g6(arc_start_y)}) (${g6(arc_diameter_x)} ${g6(arc_diameter_y)}) (${g6(arc_finish_x)} ${g6(arc_finish_y)});\n`);
+  const g = eagleArcGeometry(p);
+  if (g) {
+    const sweep = g.ccw ? mod2pi(g.a2 - g.a1) : mod2pi(g.a1 - g.a2);
+    add_track_length(signal_name, layer_number, g.r * sweep);
+  }
+}
+
+/* adds a radius where two wires meet (Eagle MITER equivalent) */
+function mitre_point(radius, mitre_x, mitre_y) {
+  miters.push({ radius: radius, x: mitre_x, y: mitre_y });
+  scr_lines.push(`MITER ${g6(radius)} (${g6(mitre_x)} ${g6(mitre_y)});\n`);
+}
+
+function mitre_point_transform(segment_number, radius, mitre_x, mitre_y) {
+  [mitre_x, mitre_y] = calc_new_point(segment_number, mitre_x, mitre_y);
+  mitre_point(radius, mitre_x, mitre_y);
+}
+
+/* ------------------------- geometry (ported as-is) -------------------- */
+
+/* return the pad width according to the pad to track ratio and minimum pad size */
+function calc_pad_width(connection_number) {
+  if ((track_widths[connection_number] * pad_width_to_track_ratio) < minimum_pad_width)
+    return minimum_pad_width;
+  else
+    return track_widths[connection_number] * pad_width_to_track_ratio;
+}
+
+/* calculate and return the start and end co-ordinates and the centre value */
+function calc_pad_coordinates(segment_number, connection_number) {
+  const pad_length = pad_length_to_max_track_ratio * (pad_width_to_track_ratio * Math.max(...track_widths));
+
+  let sum_of_pad_widths = 0;
+  for (let i = 0; i < track_widths.length; i++)
+    sum_of_pad_widths += calc_pad_width(i);
+
+  sum_of_pad_widths += inter_pad_spacing * (track_widths.length - 1);
+
+  const pad_finish_y = segment_length[segment_number];
+  const pad_start_y = pad_finish_y - pad_length;
+
+  let pad_offset_x = 0;
+  for (let i = 0; i < connection_number; i++)
+    pad_offset_x += calc_pad_width(i);
+
+  pad_offset_x += inter_pad_spacing * connection_number;
+
+  const pad_width = calc_pad_width(connection_number);
+  const pad_start_x = 0 - (sum_of_pad_widths / 2) + pad_offset_x;
+  const pad_finish_x = 0 - (sum_of_pad_widths / 2) + pad_offset_x + pad_width;
+  const pad_centre_x = 0 - (sum_of_pad_widths / 2) + pad_offset_x + (pad_width / 2);
+
+  return [pad_start_x, pad_start_y, pad_finish_x, pad_finish_y, pad_centre_x, pad_width, pad_length];
+}
+
+/* x coordinate of the centre of the requested track, relative to the centre of the bundle */
+function calc_track_centre_x(connection_number) {
+  const sum_of_track_widths = track_widths.reduce((a, b) => a + b, 0) + (inter_track_spacing_straight * (track_widths.length - 1));
+
+  let track_offset_x = 0;
+  for (let i = 0; i < connection_number; i++)
+    track_offset_x += track_widths[i];
+
+  track_offset_x += inter_track_spacing_straight * connection_number;
+  const track_left_x = 0 - (sum_of_track_widths / 2) + track_offset_x;
+  const track_centre_x = track_left_x + (track_widths[connection_number] / 2);
+
+  return track_centre_x;
+}
+
+/* perpendicular offset during the taper from the centre connection */
+function calc_perpendicular_offset(segment_number, connection_number, closest_centre_x_connection) {
+  let next_angle_track_offset = 0;
+  let step;
+
+  if (calc_track_centre_x(connection_number) < calc_pad_coordinates(segment_number, connection_number)[4])
+    step = 1;
+  else
+    step = -1;
+
+  for (let i = closest_centre_x_connection; (step > 0 ? i < connection_number : i > connection_number); i += step) {
+    if (override_inter_track_spacing_angle !== 0)
+      next_angle_track_offset += (track_widths[i] / 2) + override_inter_track_spacing_angle + (track_widths[i + step] / 2);
+    else
+      next_angle_track_offset += (track_widths[i] / 2) + inter_track_spacing_angle + (track_widths[i + step] / 2);
+  }
+
+  return next_angle_track_offset;
+}
+
+function calc_meeting_y(segment_number, connection_number, centre_x_connection, m, x, additional_hyp_offset, c) {
+  const y_intersect = (calc_pad_coordinates(segment_number, centre_x_connection)[1] - additional_track_from_pad_length) - (m * calc_pad_coordinates(segment_number, centre_x_connection)[4]);
+  const y_offset = (1 / Math.cos(Math.atan(m))) * (calc_perpendicular_offset(segment_number, connection_number, centre_x_connection) + additional_hyp_offset);
+  const meet_y = (m * x) + (y_intersect - y_offset - c);
+
+  return [y_intersect, y_offset, meet_y];
+}
+
+/* distance on y between (pad_centre_x, pad_start_y) and a track that would overshoot into the pad, else 0 */
+function calc_minimum_pad_length_ajustment(segment_number, connection_number, closest_centre_x_connection) {
+  const [, pad_start_y, , , pad_centre_x] = calc_pad_coordinates(segment_number, connection_number);
+  const track_centre_x = calc_track_centre_x(connection_number);
+
+  const m = (track_centre_x < pad_centre_x) ? gradient_of_taper : -gradient_of_taper;
+
+  let total_additional_y_offset = 0;
+  let track_meet_pad_centre_y;
+
+  if (connection_number <= closest_centre_x_connection)
+    track_meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection, m, calc_pad_coordinates(segment_number, connection_number)[4], 0, 0)[2];
+  else
+    track_meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection + 1, m, calc_pad_coordinates(segment_number, connection_number)[4], 0, 0)[2];
+
+  if (track_meet_pad_centre_y > (pad_start_y - additional_track_from_pad_length))
+    total_additional_y_offset = track_meet_pad_centre_y - (pad_start_y - additional_track_from_pad_length);
+
+  return total_additional_y_offset;
+}
+
+/* maximum value returned from any connection by calc_minimum_pad_length_ajustment */
+function find_max_overshoot(segment_number, closest_centre_x_connection) {
+  let max_overshoot_y = 0;
+
+  // fixed inherited off-by-one: the original excluded the last track from the scan
+  for (let i = 0; i < track_widths.length; i++) {
+    if (calc_minimum_pad_length_ajustment(segment_number, i, closest_centre_x_connection) > max_overshoot_y)
+      max_overshoot_y = calc_minimum_pad_length_ajustment(segment_number, i, closest_centre_x_connection);
+  }
+
+  return max_overshoot_y;
+}
+
+/* difference between the track y intersects of the outer tracks: +ve if left needs to come down, -ve if right */
+function calc_symmetrical_offset(segment_number, closest_centre_x_connection) {
+  if (symmetry_on_shape === false)
+    return 0;
+
+  const left_track_edge_intersect_y = calc_meeting_y(segment_number, 0, closest_centre_x_connection, -gradient_of_taper, (calc_track_centre_x(0) - (track_widths[0] / 2)), (track_widths[0] / 2), find_max_overshoot(segment_number, closest_centre_x_connection))[2];
+
+  const right_track_edge_intersect_y = calc_meeting_y(segment_number, track_widths.length - 1, closest_centre_x_connection + 1, gradient_of_taper, (calc_track_centre_x(track_widths.length - 1) + (track_widths[track_widths.length - 1] / 2)), (track_widths[track_widths.length - 1] / 2), find_max_overshoot(segment_number, closest_centre_x_connection))[2];
+
+  return left_track_edge_intersect_y - right_track_edge_intersect_y;
+}
+
+/* draw a single track in either of the end segments, joining the pad to the narrower portion */
+function draw_connection(segment_number, connection_number, closest_centre_x_connection) {
+  const [, pad_start_y, , , pad_centre_x, , pad_length] = calc_pad_coordinates(segment_number, connection_number);
+  const track_centre_x = calc_track_centre_x(connection_number);
+
+  const m = (track_centre_x < pad_centre_x) ? gradient_of_taper : -gradient_of_taper;
+
+  const total_additional_spacing = find_max_overshoot(segment_number, closest_centre_x_connection);
+  let symmetrical_edge_offset_y = calc_symmetrical_offset(segment_number, closest_centre_x_connection);
+
+  if ((symmetrical_edge_offset_y > 0) && (connection_number <= closest_centre_x_connection)) {
+    symmetrical_edge_offset_y = calc_symmetrical_offset(segment_number, closest_centre_x_connection);
+    override_inter_track_spacing_angle = (Math.abs(Math.cos(Math.atan(m)) * symmetrical_edge_offset_y) / closest_centre_x_connection) + inter_track_spacing_angle;
+  } else if ((symmetrical_edge_offset_y < 0) && (connection_number > closest_centre_x_connection)) {
+    symmetrical_edge_offset_y = calc_symmetrical_offset(segment_number, closest_centre_x_connection);
+    override_inter_track_spacing_angle = (Math.abs(Math.cos(Math.atan(m)) * symmetrical_edge_offset_y) / ((track_widths.length - 1) - (closest_centre_x_connection + 1))) + inter_track_spacing_angle;
+  }
+
+  let meet_pad_centre_y, meet_track_centre_y;
+  if (connection_number <= closest_centre_x_connection) {
+    meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection, m, pad_centre_x, 0, total_additional_spacing)[2];
+    meet_track_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection, m, track_centre_x, 0, total_additional_spacing)[2];
+  } else {
+    meet_pad_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection + 1, m, pad_centre_x, 0, total_additional_spacing)[2];
+    meet_track_centre_y = calc_meeting_y(segment_number, connection_number, closest_centre_x_connection + 1, m, track_centre_x, 0, total_additional_spacing)[2];
+  }
+
+  override_inter_track_spacing_angle = 0;
+
+  draw_wire_transform(segment_number, String(connection_number), top_layer_number, track_widths[connection_number], pad_centre_x, pad_start_y + (pad_length / 2), pad_centre_x, meet_pad_centre_y);
+  draw_wire_transform(segment_number, String(connection_number), top_layer_number, track_widths[connection_number], pad_centre_x, meet_pad_centre_y, track_centre_x, meet_track_centre_y);
+  draw_wire_transform(segment_number, String(connection_number), top_layer_number, track_widths[connection_number], track_centre_x, meet_track_centre_y, track_centre_x, 0);
+}
+
+/* draws the outer cuts for the end sections and the reinforcement layer */
+function draw_outer_cut(segment_number, closest_centre_x_connection) {
+  const symmetrical_edge_offset_y = calc_symmetrical_offset(segment_number, closest_centre_x_connection);
+
+  // left hand side
+  let [pad_start_x, , pad_finish_x, , , pad_width] = calc_pad_coordinates(segment_number, 0);
+  let track_centre_x = calc_track_centre_x(0);
+
+  const outline_first_pad_x = pad_start_x - track_to_edge_spacing;
+  const outline_first_track_x = track_centre_x - (track_widths[0] / 2) - track_to_edge_spacing;
+
+  let c = 0;
+  if (symmetrical_edge_offset_y > 0)
+    c += symmetrical_edge_offset_y;
+
+  const left_outline_pad_intersect_y = calc_meeting_y(segment_number, 0, closest_centre_x_connection, -gradient_of_taper, outline_first_pad_x, track_to_edge_spacing + (track_widths[0] / 2), find_max_overshoot(segment_number, closest_centre_x_connection) + c)[2];
+  const left_outline_track_intersect_y = calc_meeting_y(segment_number, 0, closest_centre_x_connection, -gradient_of_taper, outline_first_track_x, track_to_edge_spacing + (track_widths[0] / 2), find_max_overshoot(segment_number, closest_centre_x_connection) + c)[2];
+
+  // right hand side
+  [pad_start_x, , pad_finish_x, , , pad_width] = calc_pad_coordinates(segment_number, track_widths.length - 1);
+  track_centre_x = calc_track_centre_x(track_widths.length - 1);
+
+  const outline_last_pad_x = pad_finish_x + track_to_edge_spacing;
+  const outline_last_track_x = track_centre_x + (track_widths[track_widths.length - 1] / 2) + track_to_edge_spacing;
+
+  c = 0;
+  if (symmetrical_edge_offset_y < 0)
+    c += -symmetrical_edge_offset_y;
+
+  const right_outline_pad_intersect_y = calc_meeting_y(segment_number, track_widths.length - 1, closest_centre_x_connection + 1, gradient_of_taper, outline_last_pad_x, track_to_edge_spacing + (track_widths[track_widths.length - 1] / 2), find_max_overshoot(segment_number, closest_centre_x_connection) + c)[2];
+  const right_outline_track_intersect_y = calc_meeting_y(segment_number, track_widths.length - 1, closest_centre_x_connection + 1, gradient_of_taper, outline_last_track_x, track_to_edge_spacing + (track_widths[track_widths.length - 1] / 2), find_max_overshoot(segment_number, closest_centre_x_connection) + c)[2];
+
+  // draw outline
+  draw_wire_transform(segment_number, "outline", outline_layer_number, outline_draw_width, outline_first_pad_x, segment_length[segment_number], outline_last_pad_x, segment_length[segment_number]);   // top line
+
+  draw_wire_transform(segment_number, "outline", outline_layer_number, outline_draw_width, outline_first_pad_x, segment_length[segment_number], outline_first_pad_x, left_outline_pad_intersect_y);    // left upper
+  draw_wire_transform(segment_number, "outline", outline_layer_number, outline_draw_width, outline_first_pad_x, left_outline_pad_intersect_y, outline_first_track_x, left_outline_track_intersect_y);  // left angle
+  draw_wire_transform(segment_number, "outline", outline_layer_number, outline_draw_width, outline_first_track_x, left_outline_track_intersect_y, outline_first_track_x, 0);                           // left lower
+
+  draw_wire_transform(segment_number, "outline", outline_layer_number, outline_draw_width, outline_last_pad_x, segment_length[segment_number], outline_last_pad_x, right_outline_pad_intersect_y);     // right upper
+  draw_wire_transform(segment_number, "outline", outline_layer_number, outline_draw_width, outline_last_pad_x, right_outline_pad_intersect_y, outline_last_track_x, right_outline_track_intersect_y);  // right angle
+  draw_wire_transform(segment_number, "outline", outline_layer_number, outline_draw_width, outline_last_track_x, right_outline_track_intersect_y, outline_last_track_x, 0);                            // right lower
+
+  // miter the edges
+  mitre_point_transform(segment_number, outline_corner_radius, outline_first_pad_x, segment_length[segment_number]);
+  mitre_point_transform(segment_number, outline_angle_radius, outline_first_pad_x, left_outline_pad_intersect_y);
+  mitre_point_transform(segment_number, outline_angle_radius, outline_first_track_x, left_outline_track_intersect_y);
+
+  mitre_point_transform(segment_number, outline_corner_radius, outline_last_pad_x, segment_length[segment_number]);
+  mitre_point_transform(segment_number, outline_angle_radius, outline_last_pad_x, right_outline_pad_intersect_y);
+  mitre_point_transform(segment_number, outline_angle_radius, outline_last_track_x, right_outline_track_intersect_y);
+
+  // draw the reinforcement layer
+  draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, outline_first_pad_x, segment_length[segment_number], 0, 0);
+
+  for (let i = 0; i < track_widths.length; i++) {   // arc shaped fingers around each pad
+    [pad_start_x, , pad_finish_x, , , pad_width] = calc_pad_coordinates(segment_number, i);
+
+    draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_start_x, segment_length[segment_number], 0, 1);
+    // arc height via intersecting chord theorem: R = (H/2) + ((W^2)/(8*H))
+    // fixed inherited bug: the original used `segment_number > 1`, which flipped
+    // the arc direction on the far end of two-segment boards
+    draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_start_x, segment_length[segment_number] - distance_arc_from_edge, ((segment_number > 0) ? 1 : -1) * (((pad_arc_height / 2) + ((pad_width * pad_width) / (8 * pad_arc_height))) * 2), 1);
+    draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_finish_x, segment_length[segment_number] - distance_arc_from_edge, 0, 1);
+    draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_finish_x, segment_length[segment_number], 0, 1);
+  }
+
+  [pad_start_x, , pad_finish_x, , , pad_width] = calc_pad_coordinates(segment_number, track_widths.length - 1);
+  draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, outline_last_pad_x, segment_length[segment_number], 0, 1);
+
+  draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, outline_last_pad_x, segment_length[segment_number] - taper_distance_from_edge, 0, 1);
+
+  for (let i = 0; i < triangles_across_width; i++) {  // triangular tapered stress relief
+    draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, outline_last_pad_x - (((Math.abs(outline_first_pad_x) + outline_last_pad_x) / triangles_across_width) * (i + 1)) + (((Math.abs(outline_first_pad_x) + outline_last_pad_x) / triangles_across_width) / 2), segment_length[segment_number] - taper_distance_from_edge - triangle_height, 0, 1);
+    draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, outline_last_pad_x - (((Math.abs(outline_first_pad_x) + outline_last_pad_x) / triangles_across_width) * (i + 1)), segment_length[segment_number] - taper_distance_from_edge, 0, 1);
+  }
+
+  draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, outline_first_pad_x, segment_length[segment_number] - taper_distance_from_edge, 0, 1);
+  draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, outline_first_pad_x, segment_length[segment_number], 0, 2);
+}
+
+/* draw the two vias that make up the castellation ends and solder pass-through */
+function draw_vias_all(segment_number) {
+  for (let connection_number = 0; connection_number < track_widths.length; connection_number++) {
+    const pad_width = calc_pad_coordinates(segment_number, connection_number)[5];
+
+    let via_drill_size;
+    if ((preferred_via_drill_size + (via_annular_ring * 2) + (minimum_via_to_pad_edge * 2)) > pad_width)
+      via_drill_size = pad_width - (via_annular_ring * 2) - (minimum_via_to_pad_edge * 2);
+    else
+      via_drill_size = preferred_via_drill_size;
+
+    // castellation end
+    draw_via_transform(segment_number, String(connection_number), via_drill_size + (via_annular_ring * 2), via_drill_size, "1-16", calc_pad_coordinates(segment_number, connection_number)[4], segment_length[segment_number]);
+    // centre via
+    draw_via_transform(segment_number, String(connection_number), via_drill_size + (via_annular_ring * 2), via_drill_size, "1-16", calc_pad_coordinates(segment_number, connection_number)[4], calc_pad_coordinates(segment_number, connection_number)[1] + (calc_pad_coordinates(segment_number, connection_number)[6] / 2));
+  }
+}
+
+/* pivot point of a segment, assuming all segments are laid out straight */
+function calc_segment_rotation_origin(segment_number) {
+  let origin_x;
+  if (segment_angle[segment_number - 1] < 0)
+    origin_x = calc_track_centre_x(0) - segment_inner_radius[segment_number - 1];
+  else
+    origin_x = calc_track_centre_x(track_widths.length - 1) + segment_inner_radius[segment_number - 1];
+
+  let origin_y = 0;
+  for (let i = 1; i < segment_number; i++)
+    origin_y += segment_length[i];
+
+  return [origin_x, origin_y];
+}
+
+/* absolute pivot point of a segment given the preceding angles */
+function calc_abs_segment_origin_recursive(segment_number, count) {
+  if (count === 0) {
+    return calc_segment_rotation_origin(segment_number);
+  } else {
+    const [point_x, point_y] = calc_abs_segment_origin_recursive(segment_number, count - 1);
+    const [origin_x, origin_y] = calc_abs_segment_origin_recursive(segment_number - (segment_number - count), segment_number - (segment_number - count) - 1);
+    return rotate_2d(segment_angle[count - 1], point_x, point_y, origin_x, origin_y);
+  }
+}
+
+/* transform a point in segment-local coordinates to its absolute location */
+function calc_new_point(segment_number, point_x, point_y) {
+  let new_x = point_x;
+  let new_y = point_y;
+
+  if (segment_number === 0) {           // first segment is just mirrored
+    new_x = point_x;
+    new_y = -point_y;
+  } else {
+    let delta_y = 0;
+    for (let i = 1; i < segment_number; i++)
+      delta_y += segment_length[i];
+
+    new_y += delta_y;
+
+    for (let i = 1; i < segment_number + 1; i++) {
+      const [absolute_point_x, absolute_point_y] = calc_abs_segment_origin_recursive(i, i - 1);
+      [new_x, new_y] = rotate_2d(segment_angle[i - 1], new_x, new_y, absolute_point_x, absolute_point_y);
+    }
+  }
+
+  return [new_x, new_y];
+}
+
+/* draw the curved section between segments */
+function draw_next_connection(angle_number) {
+  for (let connection_number = 0; connection_number < track_widths.length; connection_number++) {
+    if (segment_angle[angle_number] !== 0) {
+      let arc_diameter_x, clockwise;
+      if (segment_angle[angle_number] < 0) {
+        arc_diameter_x = calc_track_centre_x(connection_number) - ((calc_track_centre_x(connection_number) - calc_track_centre_x(0) + segment_inner_radius[angle_number]) * 2);
+        clockwise = false;
+      } else {
+        arc_diameter_x = calc_track_centre_x(connection_number) + ((calc_track_centre_x(track_widths.length - 1) - calc_track_centre_x(connection_number) + segment_inner_radius[angle_number]) * 2);
+        clockwise = true;
+      }
+
+      const [arc_track_diameter_x, arc_track_diameter_y] = calc_new_point(angle_number, arc_diameter_x, segment_length[angle_number] * (angle_number !== 0 ? 1 : 0));
+      const [arc_track_start_x, arc_track_start_y] = calc_new_point(angle_number, calc_track_centre_x(connection_number), segment_length[angle_number] * (angle_number !== 0 ? 1 : 0));
+      const [arc_track_finish_x, arc_track_finish_y] = calc_new_point(angle_number + 1, calc_track_centre_x(connection_number), 0);
+
+      draw_arc(String(connection_number), top_layer_number, track_widths[connection_number], clockwise, arc_track_start_x, arc_track_start_y, arc_track_diameter_x, arc_track_diameter_y, arc_track_finish_x, arc_track_finish_y);
+
+      // draw the outline alongside the outermost tracks
+      if (connection_number === 0 || connection_number === track_widths.length - 1) {
+        let arc_outline_diameter_x = arc_diameter_x + ((track_to_edge_spacing + (track_widths[connection_number] / 2)) * ((Math.abs(calc_track_centre_x(connection_number)) / calc_track_centre_x(connection_number)) * -1));
+        let arc_outline_diameter_y = segment_length[angle_number] * (angle_number !== 0 ? 1 : 0);
+        [arc_outline_diameter_x, arc_outline_diameter_y] = calc_new_point(angle_number, arc_outline_diameter_x, arc_outline_diameter_y);
+        let arc_outline_start_x = calc_track_centre_x(connection_number) - ((track_to_edge_spacing + (track_widths[connection_number] / 2)) * ((Math.abs(calc_track_centre_x(connection_number)) / calc_track_centre_x(connection_number)) * -1));
+        let arc_outline_start_y = segment_length[angle_number] * (angle_number !== 0 ? 1 : 0);
+        const [arc_outline_finish_x, arc_outline_finish_y] = calc_new_point(angle_number + 1, arc_outline_start_x, 0);
+        [arc_outline_start_x, arc_outline_start_y] = calc_new_point(angle_number, arc_outline_start_x, arc_outline_start_y);
+
+        draw_arc("outline", outline_layer_number, outline_draw_width, clockwise, arc_outline_start_x, arc_outline_start_y, arc_outline_diameter_x, arc_outline_diameter_y, arc_outline_finish_x, arc_outline_finish_y);
+      }
+    }
+  }
+}
+
+/* draw an 'inner' segment - any straight segment that isn't an end */
+function draw_inner(segment_number) {
+  for (let connection_number = 0; connection_number < track_widths.length; connection_number++)
+    draw_wire_transform(segment_number, String(connection_number), top_layer_number, track_widths[connection_number], calc_track_centre_x(connection_number), 0, calc_track_centre_x(connection_number), segment_length[segment_number]);
+
+  const outline_first_track_x = calc_track_centre_x(0) - (track_widths[0] / 2) - track_to_edge_spacing;
+  draw_wire_transform(segment_number, "outline", outline_layer_number, outline_draw_width, outline_first_track_x, 0, outline_first_track_x, segment_length[segment_number]);
+
+  const outline_last_track_x = calc_track_centre_x(track_widths.length - 1) + (track_widths[track_widths.length - 1] / 2) + track_to_edge_spacing;
+  draw_wire_transform(segment_number, "outline", outline_layer_number, outline_draw_width, outline_last_track_x, 0, outline_last_track_x, segment_length[segment_number]);
+}
+
+/* segment number needs to be 0 (starting end) or the last (finishing end) */
+function draw_end(segment_number) {
+  // find the point at which the angled part goes from -ve gradient to a +ve gradient
+  let closest_centre_x_connection;
+  for (let connection_number = 0; connection_number < track_widths.length; connection_number++) {
+    if (calc_track_centre_x(connection_number) > calc_pad_coordinates(0, connection_number)[4])
+      closest_centre_x_connection = connection_number;
+  }
+  if (closest_centre_x_connection === undefined)
+    throw new Error("Could not find the centre crossover connection - the pad row is narrower than the track bundle. Adjust pad widths/spacing or track widths.");
+
+  // draw each of the pads, with the centre being at x = 0
+  for (let connection_number = 0; connection_number < track_widths.length; connection_number++) {
+    const [pad_start_x, pad_start_y, pad_finish_x, pad_finish_y] = calc_pad_coordinates(segment_number, connection_number);
+    draw_rect_poly_transform(segment_number, String(connection_number), top_layer_number, polygon_draw_width, pad_start_x, pad_start_y, pad_finish_x, pad_finish_y);
+  }
+
+  // now complete the tracks
+  for (let connection_number = 0; connection_number < track_widths.length; connection_number++)
+    draw_connection(segment_number, connection_number, closest_centre_x_connection);
+
+  draw_outer_cut(segment_number, closest_centre_x_connection);
+  draw_vias_all(segment_number);
+}
+
+function output_eagle_script() {
+  for (let index = 0; index < track_widths.length; index++)
+    track_widths[index] = parseFloat(track_widths[index]);
+
+  for (let segment_number = 0; segment_number < segment_length.length; segment_number++) {
+    if (segment_number === 0) {
+      draw_end(segment_number);
+    } else if (segment_number === segment_length.length - 1) {
+      draw_next_connection(segment_number - 1);
+      draw_end(segment_number);
+    } else {
+      draw_next_connection(segment_number - 1);
+      draw_inner(segment_number);
+    }
+  }
+}
+
+/* ------------------------ MITER post-processing ----------------------- */
+/* Eagle's MITER rounds the corner where two wires meet at the given point.
+   Find the two outline wires sharing that endpoint, trim them back and
+   insert a tangent fillet arc. */
+function apply_miters() {
+  const EPS = 1e-4;
+
+  for (const m of miters) {
+    if (!(m.radius > 0)) continue;
+
+    const touching = [];
+    for (const p of primitives) {
+      if (p.type !== 'wire') continue;
+      if (Math.abs(p.x1 - m.x) < EPS && Math.abs(p.y1 - m.y) < EPS) touching.push({ w: p, end: 1 });
+      else if (Math.abs(p.x2 - m.x) < EPS && Math.abs(p.y2 - m.y) < EPS) touching.push({ w: p, end: 2 });
+      if (touching.length === 2) break;
+    }
+    if (touching.length < 2) continue;
+
+    const other = t => t.end === 1 ? [t.w.x2, t.w.y2] : [t.w.x1, t.w.y1];
+    const [ax, ay] = other(touching[0]);
+    const [bx, by] = other(touching[1]);
+
+    const la = Math.hypot(ax - m.x, ay - m.y);
+    const lb = Math.hypot(bx - m.x, by - m.y);
+    if (la < EPS || lb < EPS) continue;
+
+    const ux = (ax - m.x) / la, uy = (ay - m.y) / la;
+    const vx = (bx - m.x) / lb, vy = (by - m.y) / lb;
+
+    const dot = Math.min(1, Math.max(-1, ux * vx + uy * vy));
+    const theta = Math.acos(dot);
+    if (theta < 1e-3 || Math.PI - theta < 1e-3) continue;    // collinear or degenerate
+
+    const t = m.radius / Math.tan(theta / 2);
+    if (t > la - EPS || t > lb - EPS) continue;              // fillet doesn't fit
+
+    const pax = m.x + ux * t, pay = m.y + uy * t;            // tangent points
+    const pbx = m.x + vx * t, pby = m.y + vy * t;
+
+    let bxn = ux + vx, byn = uy + vy;                        // bisector
+    const bl = Math.hypot(bxn, byn);
+    const cx = m.x + (bxn / bl) * (m.radius / Math.sin(theta / 2));
+    const cy = m.y + (byn / bl) * (m.radius / Math.sin(theta / 2));
+
+    const set = (t_, x, y) => { if (t_.end === 1) { t_.w.x1 = x; t_.w.y1 = y; } else { t_.w.x2 = x; t_.w.y2 = y; } };
+    set(touching[0], pax, pay);
+    set(touching[1], pbx, pby);
+
+    const a1 = Math.atan2(pay - cy, pax - cx);
+    const a2 = Math.atan2(pby - cy, pbx - cx);
+    let delta = a2 - a1;
+    while (delta > Math.PI) delta -= 2 * Math.PI;
+    while (delta < -Math.PI) delta += 2 * Math.PI;
+
+    primitives.push({ type: 'fillet', layer: touching[0].w.layer, width: touching[0].w.width,
+                      cx, cy, r: m.radius, a1, a2, ccw: delta > 0 });
+  }
+}
+
+/* -------------------- polygon curve segment geometry ------------------ */
+/* Matches Eagle's POLYGON vertex `@value` semantics: |value| is the arc
+   RADIUS and the minor arc is drawn (verified against the Eagle-exported
+   reference PNGs - wide pads get a shallow bulge, narrow pads are nearly
+   flat). Radii smaller than half the chord clamp to a semicircle.
+   Positive bulges to the right of the direction of travel, negative left. */
+function solve_poly_arc(x1, y1, x2, y2, curve) {
+  const d = Math.hypot(x2 - x1, y2 - y1);
+  if (d < 1e-9) return null;
+
+  let R = Math.abs(curve);
+  if (R < d / 2) R = d / 2;
+
+  const tx = (x2 - x1) / d, ty = (y2 - y1) / d;
+  const sign = curve > 0 ? 1 : -1;
+  const nx = ty * sign, ny = -tx * sign;                     // unit normal on the bulge side (world coords, y up)
+
+  const k = Math.sqrt(Math.max(0, R * R - (d * d) / 4));
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+
+  const cx = mx - nx * k;                                    // minor arc: centre opposite the bulge
+  const cy = my - ny * k;
+
+  const a1 = Math.atan2(y1 - cy, x1 - cx);
+  const a2 = Math.atan2(y2 - cy, x2 - cx);
+  const aApex = Math.atan2((cy + ny * R) - cy, (cx + nx * R) - cx);
+
+  const mod2pi = a => ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  const ccwSweep = mod2pi(a2 - a1);
+  const apexOff = mod2pi(aApex - a1);
+  const ccw = apexOff <= ccwSweep + 1e-9;                    // sweep must pass through the apex
+
+  return { cx, cy, r: R, a1, a2, ccw };
+}
+
+/* ------------------------------ rendering ----------------------------- */
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const errorBox = document.getElementById('error');
+const statusBox = document.getElementById('status');
+
+/* Colour schemes. `board` fills the assembled outline loop (the kapton),
+   `coverlay` is re-tinted over the traces to fake the translucent film,
+   `pads` styles the copper polygons separately from the traces. */
+const SCHEMES = {
+  eagle: {
+    label: 'Eagle', bg: '#ffffff',
+    copper: '#ffad22', pads: '#ffad22',
+    outline: '#466f8c',
+    reinforcement: '#297995', reinforcementFill: 'rgba(41, 121, 149, 0.15)', reinforcementDash: true,
+    via: '#ff2323', viaHole: '#ffffff',
+    board: 'rgba(70, 111, 140, 0.10)', coverlay: null,
+    highlight: '#00b8e6',
+    defaults: { fillBoard: false, fillReinforcement: false },
+  },
+  realistic: {
+    label: 'Realistic', bg: '#e5e9ec',
+    copper: '#c8823a', pads: '#dfe2e6',
+    outline: '#8a5a1c',
+    reinforcement: '#a8752c', reinforcementFill: 'rgba(224, 138, 30, 0.40)', reinforcementDash: false,
+    via: '#dfe2e6', viaHole: '#403020',
+    board: 'rgba(224, 138, 30, 0.45)', coverlay: 'rgba(224, 138, 30, 0.40)',
+    highlight: '#2f80ed',
+    defaults: { fillBoard: true, fillReinforcement: true },
+  },
+  dark: {
+    label: 'Dark', bg: '#14181d',
+    copper: '#ffad22', pads: '#ffad22',
+    outline: '#8fb4d1',
+    reinforcement: '#35a3b8', reinforcementFill: 'rgba(53, 163, 184, 0.20)', reinforcementDash: true,
+    via: '#ff5252', viaHole: '#14181d',
+    board: 'rgba(255, 255, 255, 0.06)', coverlay: null,
+    highlight: '#00e5ff',
+    defaults: { fillBoard: false, fillReinforcement: false },
+  },
+};
+
+const appearance = {
+  scheme: 'eagle',
+  fillBoard: false,
+  fillReinforcement: false,
+  dashGap: 7,           // px between dashes on unpoured (dashed) outlines
+  layers: { copper: true, outline: true, reinforcement: true, vias: true },
+};
+
+function schemeNow() { return SCHEMES[appearance.scheme]; }
+
+const view = { x: 0, y: 0, scale: 10 };                     // world centre + px per mm
+
+function worldToScreen(x, y) {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  return [(x - view.x) * view.scale + w / 2, (view.y - y) * view.scale + h / 2];
+}
+
+function primBounds(p, ext) {
+  const grow = (x, y, r) => {
+    ext.minX = Math.min(ext.minX, x - r); ext.maxX = Math.max(ext.maxX, x + r);
+    ext.minY = Math.min(ext.minY, y - r); ext.maxY = Math.max(ext.maxY, y + r);
+  };
+  if (p.type === 'wire') { grow(p.x1, p.y1, p.width / 2); grow(p.x2, p.y2, p.width / 2); }
+  else if (p.type === 'via') { grow(p.x, p.y, p.diameter / 2); }
+  else if (p.type === 'polygon') { for (const pt of p.points) grow(pt.x, pt.y, p.width / 2); }
+  else if (p.type === 'fillet') { grow(p.cx + p.r * Math.cos(p.a1), p.cy + p.r * Math.sin(p.a1), p.width / 2); grow(p.cx + p.r * Math.cos(p.a2), p.cy + p.r * Math.sin(p.a2), p.width / 2); }
+  else if (p.type === 'arc') {
+    const g = eagleArcGeometry(p);
+    if (!g) return;
+    const steps = 32;
+    let sweep = g.ccw ? mod2pi(g.a2 - g.a1) : -mod2pi(g.a1 - g.a2);
+    for (let i = 0; i <= steps; i++) {
+      const a = g.a1 + sweep * (i / steps);
+      grow(g.cx + g.r * Math.cos(a), g.cy + g.r * Math.sin(a), p.width / 2);
+    }
+  }
+}
+
+const mod2pi = a => ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+
+/* Eagle ARC: start point, point diametrically opposite the start, end-angle point */
+function eagleArcGeometry(p) {
+  const cx = (p.x1 + p.dx) / 2, cy = (p.y1 + p.dy) / 2;
+  const r = Math.hypot(p.x1 - cx, p.y1 - cy);
+  if (r < 1e-9) return null;
+  const a1 = Math.atan2(p.y1 - cy, p.x1 - cx);
+  const a2 = Math.atan2(p.y2 - cy, p.x2 - cx);
+  return { cx, cy, r, a1, a2, ccw: !p.clockwise };
+}
+
+function computeBounds() {
+  const ext = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const p of primitives) primBounds(p, ext);
+  return ext.minX === Infinity ? null : ext;
+}
+
+function fitView() {
+  const b = computeBounds();
+  if (!b) return;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const pad = 40;
+  view.scale = Math.min((w - pad * 2) / Math.max(0.001, b.maxX - b.minX),
+                        (h - pad * 2) / Math.max(0.001, b.maxY - b.minY));
+  view.scale = Math.min(Math.max(view.scale, 0.01), 2000);
+  view.x = (b.minX + b.maxX) / 2;
+  view.y = (b.minY + b.maxY) / 2;
+  render();
+}
+
+/* draw a world-space arc into the current path (canvas y is flipped, so
+   world angles negate and the sweep direction inverts) */
+function pathArc(g) {
+  const [sx, sy] = worldToScreen(g.cx, g.cy);
+  ctx.arc(sx, sy, g.r * view.scale, -g.a1, -g.a2, g.ccw);
+}
+
+/* assemble the outline-layer wires/arcs/fillets into closed loops so the
+   board substrate (kapton) can be filled. Returns null if no closed loop
+   can be chained (e.g. mid-edit geometry). Cached until regeneration. */
+let outline_loops = null;
+
+function build_outline_loop() {
+  const edges = [];
+  for (const p of primitives) {
+    if (p.layer !== outline_layer_number) continue;
+    if (p.type === 'wire') {
+      if (Math.hypot(p.x2 - p.x1, p.y2 - p.y1) < 1e-6) continue;   // zero-length segments break chaining
+      edges.push({ kind: 'line', a: [p.x1, p.y1], b: [p.x2, p.y2] });
+    } else if (p.type === 'fillet') {
+      edges.push({ kind: 'arc', g: { cx: p.cx, cy: p.cy, r: p.r, a1: p.a1, a2: p.a2, ccw: p.ccw },
+                   a: [p.cx + p.r * Math.cos(p.a1), p.cy + p.r * Math.sin(p.a1)],
+                   b: [p.cx + p.r * Math.cos(p.a2), p.cy + p.r * Math.sin(p.a2)] });
+    } else if (p.type === 'arc') {
+      const g = eagleArcGeometry(p);
+      if (!g) continue;
+      edges.push({ kind: 'arc', g, a: [p.x1, p.y1], b: [p.x2, p.y2] });
+    }
+  }
+  if (!edges.length) return null;
+
+  const close = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 0.05;
+  const used = new Array(edges.length).fill(false);
+  const loops = [];
+
+  for (let s = 0; s < edges.length; s++) {
+    if (used[s]) continue;
+    const loop = [{ e: edges[s], rev: false }];
+    used[s] = true;
+    const start = edges[s].a;
+    let cur = edges[s].b;
+    let guard = edges.length + 2;
+    let closed = false;
+    while (guard-- > 0) {
+      if (loop.length > 2 && close(cur, start)) { closed = true; break; }
+      let found = false;
+      for (let i = 0; i < edges.length; i++) {
+        if (used[i]) continue;
+        if (close(edges[i].a, cur)) { used[i] = true; loop.push({ e: edges[i], rev: false }); cur = edges[i].b; found = true; break; }
+        if (close(edges[i].b, cur)) { used[i] = true; loop.push({ e: edges[i], rev: true }); cur = edges[i].a; found = true; break; }
+      }
+      if (!found) break;
+    }
+    if (closed) loops.push(loop);
+  }
+  return loops.length ? loops : null;
+}
+
+function fillBoardPath(color) {
+  if (outline_loops === null) outline_loops = build_outline_loop() || false;
+  if (!outline_loops) return;
+  ctx.beginPath();
+  for (const loop of outline_loops) {
+    let first = true;
+    for (const step of loop) {
+      const a = step.rev ? step.e.b : step.e.a;
+      const b = step.rev ? step.e.a : step.e.b;
+      if (first) { ctx.moveTo(...worldToScreen(a[0], a[1])); first = false; }
+      if (step.e.kind === 'line') {
+        ctx.lineTo(...worldToScreen(b[0], b[1]));
+      } else {
+        const g = step.e.g;
+        const [sx, sy] = worldToScreen(g.cx, g.cy);
+        if (!step.rev) ctx.arc(sx, sy, g.r * view.scale, -g.a1, -g.a2, g.ccw);
+        else ctx.arc(sx, sy, g.r * view.scale, -g.a2, -g.a1, !g.ccw);
+      }
+    }
+    ctx.closePath();
+  }
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function polygonPath(p) {
+  ctx.beginPath();
+  ctx.moveTo(...worldToScreen(p.points[0].x, p.points[0].y));
+  for (let i = 0; i < p.points.length - 1; i++) {
+    const a = p.points[i], b = p.points[i + 1];
+    if (a.curve) {
+      const g = solve_poly_arc(a.x, a.y, b.x, b.y, a.curve);
+      if (g) pathArc(g); else ctx.lineTo(...worldToScreen(b.x, b.y));
+    } else {
+      ctx.lineTo(...worldToScreen(b.x, b.y));
+    }
+  }
+  ctx.closePath();
+}
+
+function drawStrokePrimitive(p, color) {
+  ctx.strokeStyle = color;
+  ctx.setLineDash([]);
+  ctx.lineWidth = Math.max(p.width * view.scale, 0.5);
+  ctx.beginPath();
+  if (p.type === 'wire') {
+    ctx.moveTo(...worldToScreen(p.x1, p.y1));
+    ctx.lineTo(...worldToScreen(p.x2, p.y2));
+  } else if (p.type === 'arc') {
+    const g = eagleArcGeometry(p);
+    if (!g) return;
+    pathArc(g);
+  } else {
+    pathArc(p);   // fillet
+  }
+  ctx.stroke();
+}
+
+function drawVia(p) {
+  const S = schemeNow();
+  ctx.setLineDash([]);
+  const [sx, sy] = worldToScreen(p.x, p.y);
+  ctx.beginPath();
+  ctx.arc(sx, sy, Math.max((p.diameter / 2) * view.scale, 1.5), 0, 2 * Math.PI);
+  ctx.fillStyle = S.via;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(sx, sy, Math.max((p.drill / 2) * view.scale, 0.75), 0, 2 * Math.PI);
+  ctx.fillStyle = S.viaHole;
+  ctx.fill();
+}
+
+function render() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  const S = schemeNow();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = S.bg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // board substrate (kapton)
+  ctx.globalAlpha = focusTag && focusTag !== 'outline' ? FOCUS_DIM : 1;
+  if (appearance.fillBoard) fillBoardPath(S.board);
+
+  // copper traces
+  if (appearance.layers.copper)
+    for (const p of primitives)
+      if ((p.type === 'wire' || p.type === 'arc') && p.layer === top_layer_number) {
+        ctx.globalAlpha = alphaFor(p);
+        drawStrokePrimitive(p, selectedTracks.has(p.net) ? S.highlight : S.copper);
+      }
+
+  // translucent coverlay tint over the traces (realistic scheme)
+  ctx.globalAlpha = focusTag && focusTag !== 'outline' ? FOCUS_DIM : 1;
+  if (appearance.fillBoard && S.coverlay) fillBoardPath(S.coverlay);
+
+  // copper pads (exposed / tinned, so above the coverlay)
+  if (appearance.layers.copper)
+    for (const p of primitives)
+      if (p.type === 'polygon' && p.layer === top_layer_number) {
+        ctx.globalAlpha = alphaFor(p);
+        const color = selectedTracks.has(p.net) ? S.highlight : S.pads;
+        polygonPath(p);
+        ctx.fillStyle = color;
+        ctx.strokeStyle = color;
+        ctx.setLineDash([]);
+        ctx.lineWidth = Math.max(p.width * view.scale, 0.5);
+        ctx.fill();
+        ctx.stroke();
+      }
+
+  // reinforcement overlay
+  if (appearance.layers.reinforcement)
+    for (const p of primitives)
+      if (p.type === 'polygon' && p.layer === reinforcement_layer_number) {
+        ctx.globalAlpha = alphaFor(p);
+        polygonPath(p);
+        if (appearance.fillReinforcement) {
+          ctx.fillStyle = S.reinforcementFill;
+          ctx.fill();
+        }
+        ctx.strokeStyle = S.reinforcement;
+        const dashed = S.reinforcementDash && !appearance.fillReinforcement;
+        ctx.setLineDash(dashed ? [5, appearance.dashGap] : []);
+        ctx.lineWidth = Math.max(p.width * view.scale, dashed ? 1.2 : 0.5);
+        ctx.stroke();
+      }
+
+  // board outline
+  if (appearance.layers.outline)
+    for (const p of primitives)
+      if ((p.type === 'wire' || p.type === 'arc' || p.type === 'fillet') && p.layer === outline_layer_number) {
+        ctx.globalAlpha = alphaFor(p);
+        drawStrokePrimitive(p, S.outline);
+      }
+
+  // vias
+  if (appearance.layers.vias)
+    for (const p of primitives)
+      if (p.type === 'via') {
+        ctx.globalAlpha = alphaFor(p);
+        drawVia(p);
+      }
+
+  ctx.globalAlpha = 1;
+  drawMeasureOverlay();
+
+  const b = computeBounds();
+  if (b) statusBox.textContent =
+    `Board ${ (b.maxX - b.minX).toFixed(1) } × ${ (b.maxY - b.minY).toFixed(1) } mm · ${track_widths.length} tracks · ${view.scale.toFixed(1)} px/mm`;
+}
+
+function drawMeasureOverlay() {
+  if (!measure.a) return;
+  const end = measure.b || measure.cursor;
+  if (!end) return;
+  const [ax, ay] = worldToScreen(measure.a[0], measure.a[1]);
+  const [bx, by] = worldToScreen(end[0], end[1]);
+  ctx.setLineDash([]);
+  ctx.strokeStyle = '#ff3d71';
+  ctx.fillStyle = '#ff3d71';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(bx, by);
+  ctx.stroke();
+  for (const [px, py] of [[ax, ay], [bx, by]]) {
+    ctx.beginPath();
+    ctx.arc(px, py, 3.5, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+  const dx = end[0] - measure.a[0], dy = end[1] - measure.a[1];
+  const label = `${Math.hypot(dx, dy).toFixed(3)} mm  (Δx ${dx.toFixed(3)}, Δy ${dy.toFixed(3)})`;
+  ctx.font = '12px -apple-system, sans-serif';
+  const tw = ctx.measureText(label).width;
+  const lx = (ax + bx) / 2 + 10, ly = (ay + by) / 2 - 10;
+  ctx.fillStyle = 'rgba(28, 33, 40, 0.9)';
+  ctx.fillRect(lx - 4, ly - 13, tw + 8, 18);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(label, lx, ly);
+}
+
+/* --------------------- selection, measuring, electrical --------------- */
+const selectedTracks = new Set();
+const measure = { active: false, a: null, b: null, cursor: null };
+
+/* copper resistivity 1.72e-8 ohm.m; IPC-2221 external-conductor current capacity */
+const electrical = { thickness_um: 35, deltaT: 10, reqCurrent: 0, maxDropMV: 0 };
+
+function track_resistance(i) {          // ohms
+  return 0.0172 * (track_lengths[i] || 0) / (state.track_widths[i] * electrical.thickness_um);
+}
+function track_imax(width_mm) {         // amps, IPC-2221: I = 0.048 * dT^0.44 * A[mil^2]^0.725
+  return 0.048 * Math.pow(electrical.deltaT, 0.44) * Math.pow(1.55 * width_mm * electrical.thickness_um, 0.725);
+}
+function width_for_current(amps) {      // mm, inverse of track_imax
+  return Math.pow(amps / (0.048 * Math.pow(electrical.deltaT, 0.44)), 1 / 0.725) / (1.55 * electrical.thickness_um);
+}
+function width_for_drop(i, amps, drop_v) {  // mm, from R <= V/I
+  return 0.0172 * (track_lengths[i] || 0) * amps / (electrical.thickness_um * drop_v);
+}
+function required_width(i) {
+  const I = electrical.reqCurrent, V = electrical.maxDropMV / 1000;
+  let w = 0.05;
+  if (I > 0) w = Math.max(w, width_for_current(I));
+  if (I > 0 && V > 0) w = Math.max(w, width_for_drop(i, I, V));
+  return Math.ceil(w / 0.05) * 0.05;
+}
+
+/* ------------------------------- exports ------------------------------ */
+function download(filename, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+const export_base = () => document.getElementById('preset').value || 'ffsc-design';
+
+/* Eagle script - byte-compatible with the original Python generator's output */
+function build_scr_text() {
+  let t = '';
+  t += '#Draws the outline of the flexible connector system;\n';
+  t += 'Grid mm 1 off;\n';
+  t += 'DRC LOAD drc-disable.dru;\n';
+  t += 'SET WIRE_BEND 2;\n';
+  t += 'SET PALETTE WHITE;\n';
+  t += 'SET PALETTE 16 0xff297995;\n';
+  t += 'SET PALETTE 24 0xFF2A597A;\n';
+  t += 'SET COLOR_LAYER 1 16;\n';
+  t += 'SET PALETTE 17 0xffffad22;\n';
+  t += 'SET PALETTE 25 0xFF00FCFF;\n';
+  t += 'SET COLOR_LAYER 16 17;\n';
+  t += 'SET PALETTE 18 0xFFFF2323;\n';
+  t += 'SET PALETTE 26 0xCCFF2323;\n';
+  t += 'SET COLOR_LAYER 18 18;\n';
+  t += 'SET PALETTE 19 0xFF466f8c;\n';
+  t += 'SET PALETTE 27 0xCCff6833;\n';
+  t += 'SET COLOR_LAYER 20 19;\n';
+  t += 'WINDOW;\n';
+  t += scr_lines.join('');
+  for (let i = 0; i < track_widths.length; i++)
+    t += `RATSNEST ${net_name_prefix}${i};\n`;
+  t += 'RIPUP net_reinforcement;\n';
+  t += 'WINDOW FIT;\n';
+  t += `EXPORT IMAGE ${export_base()}.png 600;\n`;
+  t += 'WRITE;\n';
+  return t;
+}
+
+/* parameters file in the original parameters_x.py format */
+function build_py_text() {
+  const p = state;
+  const list = a => '[' + a.join(', ') + ']';
+  return `# ALL UNITS IN MM. #
+# Exported from the FFSC generator browser tool.
+
+# layer configuration - the layer each of these features should be on
+
+top_layer_number = 16
+bottom_layer_number = 1
+via_layer_number = 18
+outline_layer_number = 20
+reinforcement_layer_number = 1
+
+polygon_draw_width = ${p.polygon_draw_width}  # when drawing polygons (for pad outlines) the width to use for the wire
+
+# outline parameters
+
+outline_corner_radius = ${p.outline_corner_radius}  # on the overall outline, the radius to make the 90 degree corners
+outline_angle_radius = ${p.outline_angle_radius}  # on the overall outline, the radius to make the other corners.
+outline_draw_width = ${p.outline_draw_width}  # the width to draw the outline
+
+# parameters that affect the reinforcement overlay
+
+triangles_across_width = ${p.triangles_across_width}  # the number of triangles that are used for stress relief spacing
+triangle_height = ${p.triangle_height}  # the total height of each triangle
+taper_distance_from_edge = ${p.taper_distance_from_edge}  # the distance from the edge of the connector before the taper starts
+pad_arc_height = ${p.pad_arc_height}  # the height of the arc - MUST BE >= smallest pad width / 2
+distance_arc_from_edge = ${p.distance_arc_from_edge}  # the distance of the pad arc start point from the edge of the connector - should really be above the via point
+
+# all other parameters
+
+track_to_edge_spacing = ${p.track_to_edge_spacing}  # the distance from the edge of the outermost copper track to the kapton edge
+inter_track_spacing_straight = ${p.inter_track_spacing_straight}  # the track-to-track spacing on straight parts of the connection
+inter_track_spacing_angle = ${p.inter_track_spacing_angle}  # the track-to-track spacing on the angled parts of the connection - end segments need to be long enough
+
+symmetry_on_shape = ${p.symmetry_on_shape ? 'True' : 'False'}  # if set to true, then symmetry is enforced on the overall shape
+
+inter_pad_spacing = ${p.inter_pad_spacing}  # the spacing between the pads - will affect solderability
+minimum_pad_width = ${p.minimum_pad_width}  # the minimum pad width allowed regardless of track width
+pad_width_to_track_ratio = ${p.pad_width_to_track_ratio}  # the ratio of the pad width to track width e.g. at 1.2 a 1mm track would equate to a 1.2mm pad width
+pad_length_to_max_track_ratio = ${p.pad_length_to_max_track_ratio}  # this sets the pad length. This is worked out by taking the max track width, multiplied by pad_width_to_track_ratio, multiplied by this value.
+
+additional_track_from_pad_length = ${p.additional_track_from_pad_length}  # the distance from the pad before starting the convergence of tracks on each end segment
+
+preferred_via_drill_size = ${p.preferred_via_drill_size}  # the preferred hole size
+minimum_via_to_pad_edge = ${p.minimum_via_to_pad_edge}  # the minimum distance from the edge of the via annular ring to the pad edge
+via_annular_ring = ${p.via_annular_ring}  # the annular ring to be shown on the drawing for each via - doesn't make much difference to manufacture as it's in-pad.
+
+net_name_prefix = 'net_'  # the prefix used in the name of all nets
+
+gradient_of_taper = ${p.gradient_of_taper}  # the gradient of the taper
+
+# you can specify curved sections back to back by setting the corresponding length to 0
+
+segment_length = ${list(p.segment_length)}  # this specifies both the length of each straight segment
+segment_angle = ${list(p.segment_angle)}  # this specifies the angle of each join / curved section. There should be one less angle than connections in length list
+segment_inner_radius = ${list(p.segment_inner_radius)}  # the radius of each angle
+
+track_widths = ${list(p.track_widths)}
+`;
+}
+
+/* signed sweep angle in degrees (positive = CCW), as Eagle's `curve` attribute expects */
+function sweep_deg(g) {
+  const s = g.ccw ? mod2pi(g.a2 - g.a1) : -mod2pi(g.a1 - g.a2);
+  return s * 180 / Math.PI;
+}
+
+/* Eagle 9.x XML board. Geometry mirrors what Eagle itself produces from the
+   script: outline (with miters already applied as curved wires) in <plain>,
+   copper + vias grouped per signal, reinforcement as its own signal. */
+function build_brd_text() {
+  const NL = '\n';
+  let plain = '';
+  for (const p of primitives) {
+    if (p.layer !== outline_layer_number) continue;
+    if (p.type === 'wire') {
+      plain += `<wire x1="${g6(p.x1)}" y1="${g6(p.y1)}" x2="${g6(p.x2)}" y2="${g6(p.y2)}" width="${g6(p.width)}" layer="20"/>` + NL;
+    } else if (p.type === 'fillet') {
+      const x1 = p.cx + p.r * Math.cos(p.a1), y1 = p.cy + p.r * Math.sin(p.a1);
+      const x2 = p.cx + p.r * Math.cos(p.a2), y2 = p.cy + p.r * Math.sin(p.a2);
+      plain += `<wire x1="${g6(x1)}" y1="${g6(y1)}" x2="${g6(x2)}" y2="${g6(y2)}" width="${g6(p.width)}" layer="20" curve="${g6(sweep_deg(p))}"/>` + NL;
+    } else if (p.type === 'arc') {
+      const g = eagleArcGeometry(p);
+      if (!g) continue;
+      plain += `<wire x1="${g6(p.x1)}" y1="${g6(p.y1)}" x2="${g6(p.x2)}" y2="${g6(p.y2)}" width="${g6(p.width)}" layer="20" curve="${g6(sweep_deg(g))}"/>` + NL;
+    }
+  }
+
+  const polygon_xml = (p, layer) => {
+    let s = `<polygon width="${g6(p.width)}" layer="${layer}">` + NL;
+    const pts = p.points.slice();
+    if (pts.length > 1 && Math.hypot(pts[pts.length - 1].x - pts[0].x, pts[pts.length - 1].y - pts[0].y) < 1e-9)
+      pts.pop();
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      let curveAttr = '';
+      if (a.curve) {
+        const g = solve_poly_arc(a.x, a.y, b.x, b.y, a.curve);
+        if (g) curveAttr = ` curve="${g6(sweep_deg(g))}"`;
+      }
+      s += `<vertex x="${g6(a.x)}" y="${g6(a.y)}"${curveAttr}/>` + NL;
+    }
+    return s + '</polygon>' + NL;
+  };
+
+  let signals = '';
+  for (let i = 0; i < track_widths.length; i++) {
+    signals += `<signal name="NET_${i}">` + NL;
+    for (const p of primitives) {
+      if (p.net !== i) continue;
+      if (p.type === 'polygon') signals += polygon_xml(p, p.layer);
+      else if (p.type === 'wire') signals += `<wire x1="${g6(p.x1)}" y1="${g6(p.y1)}" x2="${g6(p.x2)}" y2="${g6(p.y2)}" width="${g6(p.width)}" layer="${p.layer}"/>` + NL;
+      else if (p.type === 'arc') {
+        const g = eagleArcGeometry(p);
+        if (g) signals += `<wire x1="${g6(p.x1)}" y1="${g6(p.y1)}" x2="${g6(p.x2)}" y2="${g6(p.y2)}" width="${g6(p.width)}" layer="${p.layer}" curve="${g6(sweep_deg(g))}"/>` + NL;
+      }
+    }
+    for (const p of primitives)
+      if (p.type === 'via' && p.signal === `${net_name_prefix}${i}`)
+        signals += `<via x="${g6(p.x)}" y="${g6(p.y)}" extent="1-16" drill="${g6(p.drill)}" diameter="${g6(p.diameter)}"/>` + NL;
+    signals += '</signal>' + NL;
+  }
+  signals += '<signal name="NET_REINFORCEMENT">' + NL;
+  for (const p of primitives)
+    if (p.type === 'polygon' && p.layer === reinforcement_layer_number)
+      signals += polygon_xml(p, p.layer);
+  signals += '</signal>' + NL;
+
+  const layer = (n, name, color, fill, visible) =>
+    `<layer number="${n}" name="${name}" color="${color}" fill="${fill}" visible="${visible}" active="yes"/>`;
+  const layers = [
+    layer(1, 'Top', 16, 1, 'yes'), layer(16, 'Bottom', 17, 1, 'yes'),
+    layer(17, 'Pads', 2, 1, 'yes'), layer(18, 'Vias', 18, 1, 'yes'),
+    layer(19, 'Unrouted', 6, 1, 'yes'), layer(20, 'Dimension', 19, 1, 'yes'),
+    layer(21, 'tPlace', 7, 1, 'yes'), layer(22, 'bPlace', 7, 1, 'yes'),
+    layer(23, 'tOrigins', 15, 1, 'yes'), layer(24, 'bOrigins', 15, 1, 'yes'),
+    layer(25, 'tNames', 7, 1, 'yes'), layer(26, 'bNames', 7, 1, 'yes'),
+    layer(27, 'tValues', 7, 1, 'yes'), layer(28, 'bValues', 7, 1, 'yes'),
+    layer(29, 'tStop', 7, 3, 'no'), layer(30, 'bStop', 7, 6, 'no'),
+    layer(31, 'tCream', 7, 4, 'no'), layer(32, 'bCream', 7, 5, 'no'),
+    layer(39, 'tKeepout', 4, 11, 'yes'), layer(40, 'bKeepout', 1, 11, 'yes'),
+    layer(41, 'tRestrict', 4, 10, 'yes'), layer(42, 'bRestrict', 1, 10, 'yes'),
+    layer(43, 'vRestrict', 2, 10, 'yes'), layer(44, 'Drills', 7, 1, 'no'),
+    layer(45, 'Holes', 7, 1, 'no'), layer(46, 'Milling', 3, 1, 'no'),
+    layer(47, 'Measures', 7, 1, 'no'), layer(48, 'Document', 7, 1, 'yes'),
+    layer(49, 'Reference', 7, 1, 'yes'), layer(51, 'tDocu', 7, 1, 'yes'), layer(52, 'bDocu', 7, 1, 'yes'),
+  ].join(NL);
+
+  return `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE eagle SYSTEM "eagle.dtd">
+<eagle version="9.6.2">
+<drawing>
+<settings>
+<setting alwaysvectorfont="no"/>
+<setting verticaltext="up"/>
+</settings>
+<grid distance="1" unitdist="mm" unit="mm" style="lines" multiple="1" display="no" altdistance="5" altunitdist="mil" altunit="mil"/>
+<layers>
+${layers}
+</layers>
+<board>
+<plain>
+${plain}</plain>
+<libraries>
+</libraries>
+<attributes>
+</attributes>
+<variantdefs>
+</variantdefs>
+<classes>
+<class number="0" name="default" width="0" drill="0">
+</class>
+</classes>
+<designrules name="drc-disable">
+<param name="layerSetup" value="(1*16)"/>
+<param name="mtCopper" value="0.035mm 0.035mm 0.035mm 0.035mm 0.035mm 0.035mm 0.035mm 0.035mm 0.035mm 0.035mm 0.035mm 0.035mm 0.035mm 0.035mm 0.035mm 0.035mm"/>
+<param name="mtIsolate" value="1.5mm 0.15mm 0.2mm 0.15mm 0.2mm 0.15mm 0.2mm 0.15mm 0.2mm 0.15mm 0.2mm 0.15mm 0.2mm 0.15mm 0.2mm"/>
+<param name="mdWireWire" value="0mil"/>
+<param name="mdWirePad" value="0mil"/>
+<param name="mdWireVia" value="0mil"/>
+<param name="mdPadPad" value="0mil"/>
+<param name="mdPadVia" value="0mil"/>
+<param name="mdViaVia" value="0mil"/>
+<param name="mdSmdPad" value="0mil"/>
+<param name="mdSmdVia" value="0mil"/>
+<param name="mdSmdSmd" value="0mil"/>
+<param name="mdViaViaSameLayer" value="8mil"/>
+<param name="mnLayersViaInSmd" value="2"/>
+<param name="mdCopperDimension" value="0mil"/>
+<param name="mdDrill" value="0mil"/>
+<param name="mdSmdStop" value="0mil"/>
+<param name="msWidth" value="0mil"/>
+<param name="msDrill" value="0mil"/>
+<param name="msMicroVia" value="0mil"/>
+<param name="msBlindViaRatio" value="0"/>
+<param name="rvPadTop" value="0"/>
+<param name="rvPadInner" value="0"/>
+<param name="rvPadBottom" value="0"/>
+<param name="rvViaOuter" value="0"/>
+<param name="rvViaInner" value="0"/>
+<param name="rvMicroViaOuter" value="0"/>
+<param name="rvMicroViaInner" value="0"/>
+<param name="rlMinPadTop" value="0mil"/>
+<param name="rlMaxPadTop" value="20mil"/>
+<param name="rlMinPadInner" value="0mil"/>
+<param name="rlMaxPadInner" value="20mil"/>
+<param name="rlMinPadBottom" value="0mil"/>
+<param name="rlMaxPadBottom" value="20mil"/>
+<param name="rlMinViaOuter" value="0mil"/>
+<param name="rlMaxViaOuter" value="20mil"/>
+<param name="rlMinViaInner" value="0mil"/>
+<param name="rlMaxViaInner" value="20mil"/>
+<param name="rlMinMicroViaOuter" value="0mil"/>
+<param name="rlMaxMicroViaOuter" value="20mil"/>
+<param name="rlMinMicroViaInner" value="0mil"/>
+<param name="rlMaxMicroViaInner" value="20mil"/>
+<param name="psTop" value="-1"/>
+<param name="psBottom" value="-1"/>
+<param name="psFirst" value="-1"/>
+<param name="psElongationLong" value="100"/>
+<param name="psElongationOffset" value="100"/>
+<param name="mvStopFrame" value="1"/>
+<param name="mvCreamFrame" value="0"/>
+<param name="mlMinStopFrame" value="4mil"/>
+<param name="mlMaxStopFrame" value="4mil"/>
+<param name="mlMinCreamFrame" value="0mil"/>
+<param name="mlMaxCreamFrame" value="0mil"/>
+<param name="mlViaStopLimit" value="0mil"/>
+<param name="srRoundness" value="0"/>
+<param name="srMinRoundness" value="0mil"/>
+<param name="srMaxRoundness" value="0mil"/>
+<param name="slThermalIsolate" value="10mil"/>
+<param name="slThermalsForVias" value="0"/>
+<param name="dpMaxLengthDifference" value="10mm"/>
+<param name="dpGapFactor" value="2.5"/>
+<param name="checkAngle" value="0"/>
+<param name="checkFont" value="1"/>
+<param name="checkRestrict" value="1"/>
+<param name="checkStop" value="0"/>
+<param name="checkValues" value="0"/>
+<param name="checkNames" value="1"/>
+<param name="checkWireStubs" value="1"/>
+<param name="checkPolygonWidth" value="0"/>
+<param name="useDiameter" value="13"/>
+<param name="maxErrors" value="50"/>
+</designrules>
+<elements>
+</elements>
+<signals>
+${signals}</signals>
+</board>
+</drawing>
+</eagle>
+`;
+}
+
+/* KiCad 7+ board. KiCad's Y axis points down, so Y is negated throughout.
+   Pads become filled zones (press 'B' in KiCad to pour them); the
+   reinforcement outline goes to F.Adhes, the board outline to Edge.Cuts. */
+function build_kicad_text() {
+  const k = x => String(Math.round(x * 10000) / 10000);
+  const NL = '\n';
+  let body = '';
+
+  const arc_points = g => {
+    const sweep = g.ccw ? mod2pi(g.a2 - g.a1) : -mod2pi(g.a1 - g.a2);
+    const at = a => [g.cx + g.r * Math.cos(a), g.cy + g.r * Math.sin(a)];
+    return { s: at(g.a1), m: at(g.a1 + sweep / 2), e: at(g.a1 + sweep) };
+  };
+
+  // board outline
+  for (const p of primitives) {
+    if (p.layer !== outline_layer_number) continue;
+    if (p.type === 'wire') {
+      body += `  (gr_line (start ${k(p.x1)} ${k(-p.y1)}) (end ${k(p.x2)} ${k(-p.y2)}) (width 0.1) (layer "Edge.Cuts"))` + NL;
+    } else {
+      const g = p.type === 'fillet' ? p : eagleArcGeometry(p);
+      if (!g) continue;
+      const a = arc_points(g);
+      body += `  (gr_arc (start ${k(a.s[0])} ${k(-a.s[1])}) (mid ${k(a.m[0])} ${k(-a.m[1])}) (end ${k(a.e[0])} ${k(-a.e[1])}) (width 0.1) (layer "Edge.Cuts"))` + NL;
+    }
+  }
+
+  // copper
+  for (const p of primitives) {
+    if (p.layer !== top_layer_number || p.net === null || p.net === undefined) continue;
+    if (p.type === 'wire') {
+      body += `  (segment (start ${k(p.x1)} ${k(-p.y1)}) (end ${k(p.x2)} ${k(-p.y2)}) (width ${k(p.width)}) (layer "F.Cu") (net ${p.net + 1}))` + NL;
+    } else if (p.type === 'arc') {
+      const g = eagleArcGeometry(p);
+      if (!g) continue;
+      const a = arc_points(g);
+      body += `  (arc (start ${k(a.s[0])} ${k(-a.s[1])}) (mid ${k(a.m[0])} ${k(-a.m[1])}) (end ${k(a.e[0])} ${k(-a.e[1])}) (width ${k(p.width)}) (layer "F.Cu") (net ${p.net + 1}))` + NL;
+    } else if (p.type === 'polygon') {
+      // pad rectangle: expand the inset vertex ring back to the true outer edge
+      const pts = p.points.slice(0, 4);
+      const c = pts.reduce((a2, q) => [a2[0] + q.x / 4, a2[1] + q.y / 4], [0, 0]);
+      const u = [pts[1].x - pts[0].x, pts[1].y - pts[0].y];
+      const v = [pts[3].x - pts[0].x, pts[3].y - pts[0].y];
+      const norm = w2 => { const l = Math.hypot(...w2); return l ? [w2[0] / l, w2[1] / l] : [0, 0]; };
+      const un = norm(u), vn = norm(v), h = p.width / 2;
+      const signs = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+      const outer = pts.map((q, idx) => [
+        q.x + signs[idx][0] * un[0] * h + signs[idx][1] * vn[0] * h,
+        q.y + signs[idx][0] * un[1] * h + signs[idx][1] * vn[1] * h,
+      ]);
+      const xy = outer.map(q => `(xy ${k(q[0])} ${k(-q[1])})`).join(' ');
+      body += `  (zone (net ${p.net + 1}) (net_name "net_${p.net}") (layer "F.Cu") (hatch edge 0.5)` + NL;
+      body += `    (connect_pads (clearance 0.2)) (min_thickness 0.05) (filled_areas_thickness no)` + NL;
+      body += `    (fill yes (thermal_gap 0.2) (thermal_bridge_width 0.2))` + NL;
+      body += `    (polygon (pts ${xy})))` + NL;
+    }
+  }
+
+  // vias
+  for (const p of primitives) {
+    if (p.type !== 'via') continue;
+    const m = p.signal.match(/^net_(\d+)$/);
+    const net = m ? parseInt(m[1], 10) + 1 : 0;
+    body += `  (via (at ${k(p.x)} ${k(-p.y)}) (size ${k(p.diameter)}) (drill ${k(p.drill)}) (layers "F.Cu" "B.Cu") (net ${net}))` + NL;
+  }
+
+  // reinforcement outline, curved segments sampled to a polyline
+  for (const p of primitives) {
+    if (p.type !== 'polygon' || p.layer !== reinforcement_layer_number) continue;
+    const pts = [];
+    for (let i = 0; i < p.points.length - 1; i++) {
+      const a = p.points[i], b = p.points[i + 1];
+      pts.push([a.x, a.y]);
+      if (a.curve) {
+        const g = solve_poly_arc(a.x, a.y, b.x, b.y, a.curve);
+        if (g) {
+          const sweep = g.ccw ? mod2pi(g.a2 - g.a1) : -mod2pi(g.a1 - g.a2);
+          for (let s = 1; s < 24; s++) {
+            const ang = g.a1 + sweep * s / 24;
+            pts.push([g.cx + g.r * Math.cos(ang), g.cy + g.r * Math.sin(ang)]);
+          }
+        }
+      }
+    }
+    const xy = pts.map(q => `(xy ${k(q[0])} ${k(-q[1])})`).join(' ');
+    body += `  (gr_poly (pts ${xy}) (layer "F.Adhes") (width ${k(p.width)}) (fill none))` + NL;
+  }
+
+  let nets = '  (net 0 "")' + NL;
+  for (let i = 0; i < track_widths.length; i++)
+    nets += `  (net ${i + 1} "net_${i}")` + NL;
+
+  return `(kicad_pcb (version 20211014) (generator "ffsc-generator")
+  (general (thickness 0.2))
+  (paper "A4")
+  (layers
+    (0 "F.Cu" signal)
+    (31 "B.Cu" signal)
+    (32 "B.Adhes" user "B.Adhesive")
+    (33 "F.Adhes" user "F.Adhesive")
+    (34 "B.Paste" user)
+    (35 "F.Paste" user)
+    (36 "B.SilkS" user "B.Silkscreen")
+    (37 "F.SilkS" user "F.Silkscreen")
+    (38 "B.Mask" user)
+    (39 "F.Mask" user)
+    (40 "Dwgs.User" user "User.Drawings")
+    (41 "Cmts.User" user "User.Comments")
+    (44 "Edge.Cuts" user)
+    (45 "Margin" user)
+    (46 "B.CrtYd" user "B.Courtyard")
+    (47 "F.CrtYd" user "F.Courtyard")
+    (48 "B.Fab" user)
+    (49 "F.Fab" user)
+  )
+  (setup (pad_to_mask_clearance 0))
+${nets}${body})
+`;
+}
+
+/* ---------------------------- URL sharing ----------------------------- */
+function encode_share_hash() {
+  const payload = { p: state, e: { t: electrical.thickness_um, dT: electrical.deltaT } };
+  const s = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  history.replaceState(null, '', '#d=' + s);
+}
+
+function decode_share_hash() {
+  if (!location.hash.startsWith('#d=')) return null;
+  try {
+    const s = location.hash.slice(3).replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(s));
+    return payload && payload.p ? payload : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function copy_share_link(btn) {
+  encode_share_hash();
+  const done = () => {
+    const prev = btn.textContent;
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => { btn.textContent = prev; }, 1500);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(location.href).then(done, () => fallbackCopy(done));
+  } else {
+    fallbackCopy(done);
+  }
+  function fallbackCopy(cb) {
+    const ta = document.createElement('textarea');
+    ta.value = location.href;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    cb();
+  }
+}
+
+/* ------------------------------- presets ------------------------------ */
+const BASE = {
+  polygon_draw_width: 0.1,
+  outline_corner_radius: 0.5, outline_angle_radius: 1.0, outline_draw_width: 0.2,
+  triangles_across_width: 6, triangle_height: 7, taper_distance_from_edge: 2.0,
+  pad_arc_height: 1.0, distance_arc_from_edge: 1.0,
+  track_to_edge_spacing: 0.5, inter_track_spacing_straight: 0.4, inter_track_spacing_angle: 0.4,
+  symmetry_on_shape: true,
+  inter_pad_spacing: 0.9, minimum_pad_width: 0.5, pad_width_to_track_ratio: 1.2, pad_length_to_max_track_ratio: 1.2,
+  additional_track_from_pad_length: -1.0,
+  preferred_via_drill_size: 0.3, minimum_via_to_pad_edge: 0.1, via_annular_ring: 0.1,
+  gradient_of_taper: 1.0,
+  segment_length: [15, 15, 5, 15.3, 15],
+  segment_angle: [45, -180, 180, -45],
+  segment_inner_radius: [2, 2, 2, 2],
+  track_widths: [0.15, 0.15, 0.15, 0.15, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 0.15, 0.15],
+};
+
+const PRESETS = {
+  'parameters_1': { ...BASE },
+  'parameters_2': { ...BASE,
+    segment_length: [20, 5, 25.95, 25.95, 5, 20],
+    segment_angle: [90, -180, 180, -180, 90],
+    segment_inner_radius: [2, 2, 2, 2, 2],
+  },
+  'parameters_3': { ...BASE,
+    outline_corner_radius: 0.25,
+    triangles_across_width: 11, triangle_height: 8.5, taper_distance_from_edge: 2.5,
+    pad_arc_height: 0.5, distance_arc_from_edge: 1.4,
+    inter_track_spacing_straight: 0.25, inter_track_spacing_angle: 0.45,
+    inter_pad_spacing: 0.5, minimum_pad_width: 0.7, pad_length_to_max_track_ratio: 1.0,
+    additional_track_from_pad_length: 0.1,
+    segment_length: [25, 25, 25], segment_angle: [0, 0], segment_inner_radius: [5, 5],
+    track_widths: [1.5, 1.5, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 1.0, 1.0, 1.0, 1.0],
+  },
+  'parameters_4': { ...BASE,
+    outline_corner_radius: 0.3, outline_angle_radius: 2.0,
+    triangle_height: 3.5, pad_arc_height: 0.5, distance_arc_from_edge: 1.2,
+    inter_track_spacing_straight: 0.25,
+    inter_pad_spacing: 0.6, pad_length_to_max_track_ratio: 1.5,
+    additional_track_from_pad_length: 0.0,
+    segment_length: [10, 8, 6, 9], segment_angle: [-45, 45, 90], segment_inner_radius: [2, 2, 2],
+    track_widths: [1.0, 1.0, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25],
+  },
+  'parameters_5': { ...BASE,
+    outline_angle_radius: 2.0,
+    triangles_across_width: 7, triangle_height: 10, taper_distance_from_edge: 4.0,
+    pad_arc_height: 0.9, distance_arc_from_edge: 2.8,
+    pad_length_to_max_track_ratio: 1.0,
+    segment_length: [55, 0, 55], segment_angle: [0, 0], segment_inner_radius: [0, 0],
+    track_widths: [0.15, 0.15, 0.15, 0.15, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 3.0],
+  },
+};
+
+/* ------------------------------ UI panel ------------------------------ */
+const state = JSON.parse(JSON.stringify(PRESETS['parameters_1']));
+
+const GROUPS = [
+  { name: 'Segments', items: [
+    { key: 'segment_length', label: 'Segment lengths', type: 'array', focus: 'straights', tip: 'The length of each straight segment (mm). First and last are the pad ends.' },
+    { key: 'segment_angle', label: 'Segment angles', type: 'array', focus: 'bends', tip: 'The angle of each join / curved section (degrees). One fewer than lengths. 0 = straight join.' },
+    { key: 'segment_inner_radius', label: 'Bend inner radii', type: 'array', focus: 'bends', tip: 'The inner radius of each curved join (mm). One fewer than lengths.' },
+  ]},
+  { name: 'Tracks', items: [
+    { key: 'track_widths', label: 'Track widths', type: 'array', focus: 'traces', tip: 'The width of each track (mm). One entry per connection.' },
+    { key: 'inter_track_spacing_straight', label: 'Spacing (straight)', step: 0.05, min: 0.01, focus: 'traces', tip: 'Track-to-track spacing on straight parts of the connection.' },
+    { key: 'inter_track_spacing_angle', label: 'Spacing (taper)', step: 0.05, min: 0.01, focus: 'copper-wires', tip: 'Track-to-track spacing on the angled parts - end segments need to be long enough.' },
+    { key: 'track_to_edge_spacing', label: 'Track to edge', step: 0.1, min: 0, focus: 'outline', tip: 'Distance from the edge of the outermost copper track to the kapton edge.' },
+    { key: 'gradient_of_taper', label: 'Taper gradient', step: 0.1, min: 0.1, focus: 'copper-wires', tip: 'The gradient of the fan-out taper at each end.' },
+    { key: 'additional_track_from_pad_length', label: 'Track from pad', step: 0.1, focus: 'copper-wires', tip: 'Distance from the pad before the convergence of tracks starts (can be negative).' },
+    { key: 'symmetry_on_shape', label: 'Enforce symmetry', type: 'bool', focus: 'outline', tip: 'If enabled, symmetry is enforced on the overall shape.' },
+  ]},
+  { name: 'Pads', items: [
+    { key: 'inter_pad_spacing', label: 'Pad spacing', step: 0.1, min: 0.05, focus: 'pads', tip: 'The spacing between the pads - will affect solderability.' },
+    { key: 'minimum_pad_width', label: 'Min pad width', step: 0.1, min: 0.1, focus: 'pads', tip: 'The minimum pad width allowed regardless of track width.' },
+    { key: 'pad_width_to_track_ratio', label: 'Width ratio', step: 0.1, min: 0.1, focus: 'pads', tip: 'Pad width = track width × this ratio.' },
+    { key: 'pad_length_to_max_track_ratio', label: 'Length ratio', step: 0.1, min: 0.1, focus: 'pads', tip: 'Pad length = max track width × width ratio × this value.' },
+  ]},
+  { name: 'Vias', items: [
+    { key: 'preferred_via_drill_size', label: 'Drill size', step: 0.05, min: 0.05, focus: 'vias', tip: 'The preferred hole size.' },
+    { key: 'via_annular_ring', label: 'Annular ring', step: 0.05, min: 0, focus: 'vias', tip: 'The annular ring shown for each via.' },
+    { key: 'minimum_via_to_pad_edge', label: 'Via to pad edge', step: 0.05, min: 0, focus: 'vias', tip: 'Minimum distance from the via annular ring to the pad edge.' },
+  ]},
+  { name: 'Reinforcement', items: [
+    { key: 'triangles_across_width', label: 'Triangles', step: 1, min: 1, int: true, focus: 'reinforcement', tip: 'The number of triangles used for stress relief spacing.' },
+    { key: 'triangle_height', label: 'Triangle height', step: 0.5, min: 0.1, focus: 'reinforcement', tip: 'The total height of each stress-relief triangle.' },
+    { key: 'taper_distance_from_edge', label: 'Taper from edge', step: 0.1, min: 0, focus: 'reinforcement', tip: 'Distance from the connector edge before the taper starts.' },
+    { key: 'pad_arc_height', label: 'Pad arc height', step: 0.1, min: 0.05, focus: 'reinforcement', tip: 'The height of the arc around each pad - must be >= smallest pad width / 2.' },
+    { key: 'distance_arc_from_edge', label: 'Arc from edge', step: 0.1, min: 0, focus: 'reinforcement', tip: 'Distance of the pad arc start point from the connector edge.' },
+  ]},
+  { name: 'Outline', items: [
+    { key: 'outline_corner_radius', label: 'Corner radius', step: 0.1, min: 0, focus: 'fillet-corner', tip: 'Radius applied to the 90° corners of the outline.' },
+    { key: 'outline_angle_radius', label: 'Angle radius', step: 0.1, min: 0, focus: 'fillet-angle', tip: 'Radius applied to the taper corners of the outline.' },
+    { key: 'outline_draw_width', step: 0.05, min: 0.05, label: 'Line width', focus: 'outline', tip: 'The width the outline is drawn at.' },
+    { key: 'polygon_draw_width', step: 0.05, min: 0.01, label: 'Polygon width', focus: 'polygons', tip: 'Wire width used when drawing polygons (pad outlines).' },
+  ]},
+];
+
+/* which primitives a focused parameter row highlights; everything else dims */
+let focusTag = null;
+
+function setFocusTag(tag) {
+  if (focusTag !== tag) {
+    focusTag = tag;
+    render();
+  }
+}
+
+function focus_match(tag, p) {
+  switch (tag) {
+    case 'straights': return p.type === 'wire' && (p.layer === top_layer_number || p.layer === outline_layer_number);
+    case 'bends': return p.type === 'arc';
+    case 'traces': return (p.type === 'wire' || p.type === 'arc') && p.layer === top_layer_number;
+    case 'copper-wires': return p.type === 'wire' && p.layer === top_layer_number;
+    case 'outline': return p.layer === outline_layer_number;
+    case 'pads': return p.type === 'polygon' && p.layer === top_layer_number;
+    case 'vias': return p.type === 'via';
+    case 'reinforcement': return p.type === 'polygon' && p.layer === reinforcement_layer_number;
+    case 'polygons': return p.type === 'polygon';
+    case 'fillet-corner': return p.type === 'fillet' && Math.abs(p.r - state.outline_corner_radius) < 1e-6;
+    case 'fillet-angle': return p.type === 'fillet' && Math.abs(p.r - state.outline_angle_radius) < 1e-6;
+  }
+  return true;
+}
+
+const FOCUS_DIM = 0.35;
+let isolate_on_hover = true;
+
+function alphaFor(p) {
+  return focusTag && !focus_match(focusTag, p) ? FOCUS_DIM : 1;
+}
+
+function buildPanel() {
+  const controls = document.getElementById('controls');
+  controls.innerHTML = '';
+
+  // view aid: isolate the hovered/edited parameter's geometry
+  const fsView = document.createElement('fieldset');
+  const isoRow = document.createElement('div');
+  isoRow.className = 'row';
+  const isoLabel = document.createElement('label');
+  isoLabel.textContent = 'Isolate feature on hover';
+  isoLabel.title = 'While hovering or editing a parameter below, fade out everything except the geometry it affects.';
+  const isoCb = document.createElement('input');
+  isoCb.type = 'checkbox';
+  isoCb.checked = isolate_on_hover;
+  isoCb.id = 'in_isolate_on_hover';
+  isoLabel.htmlFor = isoCb.id;
+  isoCb.addEventListener('change', () => {
+    isolate_on_hover = isoCb.checked;
+    if (!isolate_on_hover) setFocusTag(null);
+  });
+  isoRow.append(isoLabel, isoCb);
+  fsView.appendChild(isoRow);
+  controls.appendChild(fsView);
+
+  for (const group of GROUPS) {
+    const fs = document.createElement('fieldset');
+    const lg = document.createElement('legend');
+    lg.textContent = group.name;
+    fs.appendChild(lg);
+
+    for (const item of group.items) {
+      const row = document.createElement('div');
+      row.className = 'row' + (item.type === 'array' ? ' wide' : '');
+      const label = document.createElement('label');
+      label.textContent = item.label;
+      label.title = item.tip || '';
+      label.htmlFor = 'in_' + item.key;
+      row.appendChild(label);
+
+      let input;
+      if (item.type === 'bool') {
+        input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = state[item.key];
+        input.addEventListener('change', () => { state[item.key] = input.checked; regenerate(); });
+      } else if (item.type === 'array') {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.spellcheck = false;
+        input.value = state[item.key].join(', ');
+        input.addEventListener('input', () => {
+          const parsed = input.value.split(/[\s,;]+/).filter(s => s.length).map(Number);
+          if (parsed.length === 0 || parsed.some(n => !isFinite(n))) { input.classList.add('bad'); return; }
+          input.classList.remove('bad');
+          state[item.key] = parsed;
+          regenerate();
+        });
+      } else {
+        input = document.createElement('input');
+        input.type = 'number';
+        input.step = item.step ?? 0.1;
+        if (item.min !== undefined) input.min = item.min;
+        input.value = state[item.key];
+        input.addEventListener('input', () => {
+          const v = item.int ? parseInt(input.value, 10) : parseFloat(input.value);
+          if (!isFinite(v)) { input.classList.add('bad'); return; }
+          input.classList.remove('bad');
+          state[item.key] = v;
+          regenerate();
+        });
+      }
+      input.id = 'in_' + item.key;
+      row.appendChild(input);
+      fs.appendChild(row);
+
+      if (item.focus) {
+        row.addEventListener('mouseenter', () => { if (isolate_on_hover) setFocusTag(item.focus); });
+        row.addEventListener('mouseleave', () => { if (document.activeElement !== input) setFocusTag(null); });
+        input.addEventListener('focus', () => { if (isolate_on_hover) setFocusTag(item.focus); });
+        input.addEventListener('blur', () => setFocusTag(null));
+      }
+    }
+
+    if (group.name === 'Segments') {
+      const br = document.createElement('div');
+      br.className = 'btn-row';
+      const add = document.createElement('button');
+      add.textContent = '+ Segment';
+      add.addEventListener('click', () => {
+        state.segment_length.push(10);
+        state.segment_angle.push(0);
+        state.segment_inner_radius.push(2);
+        refreshPanelValues();
+        regenerate();
+      });
+      const rem = document.createElement('button');
+      rem.textContent = '− Segment';
+      rem.addEventListener('click', () => {
+        if (state.segment_length.length <= 1) return;
+        state.segment_length.pop();
+        state.segment_angle.pop();
+        state.segment_inner_radius.pop();
+        refreshPanelValues();
+        regenerate();
+      });
+      br.append(add, rem);
+      fs.appendChild(br);
+    }
+
+    if (group.name === 'Tracks') {
+      const br = document.createElement('div');
+      br.className = 'btn-row';
+      const add = document.createElement('button');
+      add.textContent = '+ Track';
+      add.addEventListener('click', () => {
+        state.track_widths.push(state.track_widths[state.track_widths.length - 1] || 0.5);
+        refreshPanelValues();
+        regenerate();
+      });
+      const rem = document.createElement('button');
+      rem.textContent = '− Track';
+      rem.addEventListener('click', () => {
+        if (state.track_widths.length <= 2) return;
+        state.track_widths.pop();
+        refreshPanelValues();
+        regenerate();
+      });
+      br.append(add, rem);
+      fs.insertBefore(br, fs.children[2] || null);   // right below the track widths row
+    }
+
+    controls.appendChild(fs);
+  }
+}
+
+function buildExportPanel() {
+  const root = document.getElementById('export-controls');
+  root.innerHTML = '';
+
+  const mk = (label, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.addEventListener('click', fn);
+    return b;
+  };
+  const section = (title, button, noteText) => {
+    const fs = document.createElement('fieldset');
+    fs.innerHTML = `<legend>${title}</legend>`;
+    const br = document.createElement('div');
+    br.className = 'btn-row';
+    br.append(button);
+    fs.appendChild(br);
+    const note = document.createElement('div');
+    note.className = 'mini-note';
+    note.textContent = noteText;
+    fs.appendChild(note);
+    root.appendChild(fs);
+    return fs;
+  };
+
+  section('Eagle script', mk('Download .scr', () => download(export_base() + '.scr', build_scr_text())),
+    'Identical to the original Python generator output. In Eagle: new board, File → Execute Script.');
+  section('Eagle board', mk('Download .brd', () => download(export_base() + '.brd', build_brd_text())),
+    'Eagle 9.x XML board with the drc-disable rules embedded. Run RATSNEST to pour the pads.');
+  section('KiCad board', mk('Download .kicad_pcb', () => download(export_base() + '.kicad_pcb', build_kicad_text())),
+    'KiCad 6+ board. Pads export as net-connected zones - press B in KiCad to pour them. Reinforcement is on F.Adhes.');
+  section('Parameters', mk('Download .py', () => download('parameters_export.py', build_py_text())),
+    'Parameter file in the original parameters_x.py format, ready for the Python generator.');
+  const shareBtn = mk('Copy share link', () => copy_share_link(shareBtn));
+  section('Share', shareBtn,
+    'Copies a URL with the whole design encoded in it. The address bar also stays up to date as you edit, so a bookmark captures the current design.');
+}
+
+function buildAppearancePanel() {
+  const root = document.getElementById('appearance-controls');
+  root.innerHTML = '';
+
+  const fieldset = (title) => {
+    const fs = document.createElement('fieldset');
+    const lg = document.createElement('legend');
+    lg.textContent = title;
+    fs.appendChild(lg);
+    root.appendChild(fs);
+    return fs;
+  };
+  let rowId = 0;
+  const row = (fs, labelText, input, tip) => {
+    const r = document.createElement('div');
+    r.className = 'row';
+    const l = document.createElement('label');
+    l.textContent = labelText;
+    if (tip) l.title = tip;
+    input.id = 'ap_' + (rowId++);
+    l.htmlFor = input.id;
+    r.appendChild(l);
+    r.appendChild(input);
+    fs.appendChild(r);
+    return r;
+  };
+  const checkbox = (checked, onchange) => {
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = checked;
+    cb.addEventListener('change', () => onchange(cb.checked));
+    return cb;
+  };
+
+  // colour scheme
+  const fsScheme = fieldset('Colour scheme');
+  const sel = document.createElement('select');
+  sel.id = 'ap_scheme';
+  sel.setAttribute('aria-label', 'Colour scheme');
+  sel.style.width = '100%';
+  for (const [key, s] of Object.entries(SCHEMES)) {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = s.label;
+    sel.appendChild(opt);
+  }
+  sel.value = appearance.scheme;
+  sel.addEventListener('change', () => {
+    appearance.scheme = sel.value;
+    Object.assign(appearance, SCHEMES[sel.value].defaults);
+    buildAppearancePanel();      // refresh dependent checkboxes
+    render();
+  });
+  fsScheme.appendChild(sel);
+
+  // fills
+  const fsFill = fieldset('Fills');
+  row(fsFill, 'Fill board (kapton)', checkbox(appearance.fillBoard, v => { appearance.fillBoard = v; render(); }),
+      'Fill the area inside the board outline as the kapton substrate.');
+  row(fsFill, 'Fill reinforcement', checkbox(appearance.fillReinforcement, v => { appearance.fillReinforcement = v; render(); }),
+      'Fill the reinforcement overlay instead of drawing it as a dashed outline.');
+
+  // dashed line density
+  const fsDash = fieldset('Dashed lines');
+  const dash = document.createElement('input');
+  dash.type = 'number';
+  dash.min = 2; dash.max = 40; dash.step = 1;
+  dash.value = appearance.dashGap;
+  dash.addEventListener('input', () => {
+    const v = parseInt(dash.value, 10);
+    if (isFinite(v) && v >= 2) { appearance.dashGap = v; render(); }
+  });
+  row(fsDash, 'Dash spacing (px)', dash, 'Gap between dashes on unpoured (dashed) outlines.');
+
+  // layer visibility
+  const fsLayers = fieldset('Layers');
+  const wrap = document.createElement('div');
+  wrap.className = 'toggles';
+  const S = schemeNow();
+  const layers = [
+    ['copper', 'Copper', S.copper], ['outline', 'Outline', S.outline],
+    ['reinforcement', 'Reinforcement', S.reinforcement], ['vias', 'Vias', S.via],
+  ];
+  for (const [key, name, color] of layers) {
+    const l = document.createElement('label');
+    const cb = checkbox(appearance.layers[key], v => { appearance.layers[key] = v; render(); });
+    l.appendChild(cb);
+    const sw = document.createElement('span');
+    sw.className = 'swatch';
+    sw.style.background = color;
+    l.appendChild(sw);
+    l.appendChild(document.createTextNode(name));
+    wrap.appendChild(l);
+  }
+  fsLayers.appendChild(wrap);
+}
+
+/* ------------------------------ tracks tab ---------------------------- */
+function buildTracksPanel() {
+  const root = document.getElementById('tracks-controls');
+  root.innerHTML = '';
+
+  const fsCu = document.createElement('fieldset');
+  fsCu.innerHTML = '<legend>Copper</legend>';
+  const numRow = (labelText, value, step, min, tip, onchange) => {
+    const r = document.createElement('div');
+    r.className = 'row';
+    const l = document.createElement('label');
+    l.textContent = labelText;
+    l.title = tip;
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = step; inp.min = min; inp.value = value;
+    inp.id = 'tr_' + labelText.replace(/\W+/g, '_');
+    l.htmlFor = inp.id;
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      if (isFinite(v) && v >= parseFloat(inp.min || 0)) { onchange(v); renderTracksTab(); }
+    });
+    r.append(l, inp);
+    return r;
+  };
+  fsCu.append(
+    numRow('Copper thickness (µm)', electrical.thickness_um, 1, 5, '35 µm = 1 oz, 18 µm = 0.5 oz', v => { electrical.thickness_um = v; }),
+    numRow('Temperature rise (°C)', electrical.deltaT, 1, 1, 'Allowed self-heating for the current capacity estimate (IPC-2221)', v => { electrical.deltaT = v; }),
+  );
+
+  const fsSolver = document.createElement('fieldset');
+  fsSolver.innerHTML = '<legend>Constraint solver</legend>';
+  fsSolver.append(
+    numRow('Required current (A)', electrical.reqCurrent || '', 0.1, 0, 'The current the selected tracks must carry', v => { electrical.reqCurrent = v; }),
+    numRow('Max voltage drop (mV)', electrical.maxDropMV || '', 10, 0, 'Maximum end-to-end voltage drop at the required current', v => { electrical.maxDropMV = v; }),
+  );
+  const solverOut = document.createElement('div');
+  solverOut.className = 'mini-note';
+  solverOut.id = 'solver-out';
+  const applyRow = document.createElement('div');
+  applyRow.className = 'btn-row';
+  const applyBtn = document.createElement('button');
+  applyBtn.id = 'solver-apply';
+  applyBtn.textContent = 'Apply width to selected';
+  applyBtn.addEventListener('click', () => {
+    if (!(electrical.reqCurrent > 0) || selectedTracks.size === 0) return;
+    // widening tracks grows the board and lengthens every track, which raises
+    // the voltage drop again - iterate until widths and geometry agree
+    for (let pass = 0; pass < 10; pass++) {
+      let changed = false;
+      for (const i of selectedTracks) {
+        const w = Number(required_width(i).toFixed(2));
+        if (Math.abs(w - state.track_widths[i]) > 0.001) { state.track_widths[i] = w; changed = true; }
+      }
+      if (!changed) break;
+      apply_params(state);
+      primitives = []; miters = []; current_polygon = null;
+      scr_lines = []; track_lengths = [];
+      override_inter_track_spacing_angle = 0;
+      try { output_eagle_script(); } catch (e) { break; }
+    }
+    refreshPanelValues();
+    regenerate();
+  });
+  applyRow.appendChild(applyBtn);
+  fsSolver.append(solverOut, applyRow);
+
+  const fsTable = document.createElement('fieldset');
+  fsTable.innerHTML = '<legend>Tracks</legend>';
+  const selRow = document.createElement('div');
+  selRow.className = 'btn-row';
+  const selAll = document.createElement('button');
+  selAll.textContent = 'Select all';
+  selAll.addEventListener('click', () => {
+    for (let i = 0; i < state.track_widths.length; i++) selectedTracks.add(i);
+    render(); renderTracksTab();
+  });
+  const selNone = document.createElement('button');
+  selNone.textContent = 'Select none';
+  selNone.addEventListener('click', () => { selectedTracks.clear(); render(); renderTracksTab(); });
+  selRow.append(selAll, selNone);
+  const tableWrap = document.createElement('div');
+  tableWrap.id = 'tracks-table';
+  const note = document.createElement('div');
+  note.className = 'mini-note';
+  note.textContent = 'R and ΔV use total routed copper length; Imax is the IPC-2221 external-conductor estimate at the temperature rise above. Click rows (or tracks on the canvas) to select.';
+  fsTable.append(selRow, tableWrap, note);
+
+  root.append(fsCu, fsSolver, fsTable);
+  renderTracksTab();
+}
+
+function renderTracksTab() {
+  const wrap = document.getElementById('tracks-table');
+  if (!wrap) return;
+
+  const I = electrical.reqCurrent;
+  let html = '<table class="tracks"><thead><tr><th>#</th><th>w mm</th><th>L mm</th><th>R mΩ</th><th>Imax A</th>';
+  if (I > 0) html += '<th>ΔV mV</th>';
+  html += '</tr></thead><tbody>';
+  for (let i = 0; i < state.track_widths.length; i++) {
+    const w = state.track_widths[i];
+    const L = track_lengths[i] || 0;
+    const R = track_resistance(i);
+    const imax = track_imax(w);
+    const drop = I > 0 ? I * R * 1000 : 0;
+    const violates = I > 0 && (imax < I || (electrical.maxDropMV > 0 && drop > electrical.maxDropMV));
+    const cls = (selectedTracks.has(i) ? 'sel' : '') + (violates && selectedTracks.has(i) ? ' viol' : violates ? ' viol' : '');
+    html += `<tr data-i="${i}" class="${cls.trim()}"><td>${i}</td><td>${w.toFixed(2)}</td><td>${L.toFixed(1)}</td><td>${(R * 1000).toFixed(1)}</td><td>${imax.toFixed(2)}</td>`;
+    if (I > 0) html += `<td>${drop.toFixed(1)}</td>`;
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+  for (const tr of wrap.querySelectorAll('tbody tr')) {
+    tr.addEventListener('click', () => {
+      const i = parseInt(tr.dataset.i, 10);
+      if (selectedTracks.has(i)) selectedTracks.delete(i); else selectedTracks.add(i);
+      render();
+      renderTracksTab();
+    });
+  }
+
+  const out = document.getElementById('solver-out');
+  const applyBtn = document.getElementById('solver-apply');
+  if (out && applyBtn) {
+    if (!(I > 0)) {
+      out.textContent = 'Enter a required current (and optionally a max voltage drop), select tracks, then apply.';
+      applyBtn.disabled = true;
+    } else if (selectedTracks.size === 0) {
+      out.textContent = `Width for ${I} A self-heating limit: ${width_for_current(I).toFixed(2)} mm. Select tracks to apply.`;
+      applyBtn.disabled = true;
+    } else {
+      const widths = [...selectedTracks].map(i => required_width(i));
+      const lo = Math.min(...widths), hi = Math.max(...widths);
+      out.textContent = `Required width for ${selectedTracks.size} selected track(s): ` +
+        (hi - lo < 0.001 ? `${hi.toFixed(2)} mm` : `${lo.toFixed(2)} – ${hi.toFixed(2)} mm (per-track, drop depends on length)`);
+      applyBtn.disabled = false;
+    }
+  }
+}
+
+/* -------------------------------- DRC --------------------------------- */
+/* Geometric feasibility checks the original generator never did - it would
+   silently emit broken geometry. Estimates reuse the generator's own maths,
+   ignoring the symmetry redistribution, so taper figures are approximate. */
+const drc = { enabled: true, findings: [] };
+
+/* lowest y (segment-local) that any track's taper reaches in an end segment;
+   negative means the taper needs more room than the segment provides and the
+   generator will fold the tracks back on themselves */
+function taper_min_meet(seg) {
+  let closest;
+  for (let cn = 0; cn < track_widths.length; cn++)
+    if (calc_track_centre_x(cn) > calc_pad_coordinates(0, cn)[4]) closest = cn;
+  if (closest === undefined) return null;
+
+  const overshoot = find_max_overshoot(seg, closest);
+  let minMeet = Infinity, worstCn = 0;
+  for (let cn = 0; cn < track_widths.length; cn++) {
+    const track_centre_x = calc_track_centre_x(cn);
+    const m = (track_centre_x < calc_pad_coordinates(seg, cn)[4]) ? gradient_of_taper : -gradient_of_taper;
+    const centre = (cn <= closest) ? closest : closest + 1;
+    const meet = calc_meeting_y(seg, cn, centre, m, track_centre_x, 0, overshoot)[2];
+    if (meet < minMeet) { minMeet = meet; worstCn = cn; }
+  }
+  return { minMeet, worstCn };
+}
+
+function fix_taper_overrun(seg) {
+  // meets shift up 1:1 with segment length, but iterate for safety;
+  // target >= 1 mm of straight track so the fix also clears the warning
+  for (let pass = 0; pass < 8; pass++) {
+    apply_params(state);
+    const r = taper_min_meet(seg);
+    if (!r || r.minMeet >= 1) break;
+    state.segment_length[seg] = Math.ceil((state.segment_length[seg] - r.minMeet + 1.5) * 2) / 2;
+  }
+  refreshPanelValues();
+  regenerate();
+}
+
+function run_drc() {
+  const findings = [];
+  const n = track_widths.length;
+  const err = (msg, loc, fix) => findings.push({ level: 'err', msg, loc, fix });
+  const warn = (msg, loc, fix) => findings.push({ level: 'warn', msg, loc, fix });
+
+  const pad_length = pad_length_to_max_track_ratio * (pad_width_to_track_ratio * Math.max(...track_widths));
+  const ends = [0, segment_length.length - 1];
+
+  const pad_loc = (seg, i) => {
+    const c = calc_pad_coordinates(seg, i);
+    return calc_new_point(seg, c[4], (c[1] + c[3]) / 2);
+  };
+
+  // vias must fit their pads
+  for (let i = 0; i < n; i++) {
+    const pw = calc_pad_width(i);
+    const drill = Math.min(preferred_via_drill_size, pw - 2 * via_annular_ring - 2 * minimum_via_to_pad_edge);
+    if (drill <= 0)
+      err(`Track ${i}: pad (${pw.toFixed(2)} mm) too narrow for a via - drill would be ${drill.toFixed(2)} mm`, pad_loc(0, i));
+    else if (drill < 0.1 - 1e-9)
+      warn(`Track ${i}: via drill shrinks to ${drill.toFixed(2)} mm - check your fab's minimum drill`, pad_loc(0, i));
+    if (track_widths[i] > pw + 1e-9)
+      warn(`Track ${i} (${track_widths[i]} mm) is wider than its pad (${pw.toFixed(2)} mm)`, pad_loc(0, i));
+  }
+
+  // find the taper crossover (same scan as draw_end)
+  let closest;
+  for (let cn = 0; cn < n; cn++)
+    if (calc_track_centre_x(cn) > calc_pad_coordinates(0, cn)[4]) closest = cn;
+
+  for (const seg of ends) {
+    // pads must fit in the end segment
+    if (pad_length > segment_length[seg])
+      err(`End segment ${seg}: pads (${pad_length.toFixed(1)} mm) are longer than the segment (${segment_length[seg]} mm)`, calc_new_point(seg, 0, segment_length[seg] / 2),
+        { label: 'Lengthen segment', apply: () => fix_taper_overrun(seg) });
+
+    // the taper must complete before the end of the segment - if it can't,
+    // the generator folds the tracks back on themselves
+    const r = taper_min_meet(seg);
+    if (r) {
+      if (r.minMeet < 0)
+        err(`End segment ${seg}: taper overruns the segment by ~${(-r.minMeet).toFixed(1)} mm - the tracks fold back on themselves`, calc_new_point(seg, calc_track_centre_x(r.worstCn), 0),
+          { label: 'Lengthen segment', apply: () => fix_taper_overrun(seg) });
+      else if (r.minMeet < 1)
+        warn(`End segment ${seg}: only ~${r.minMeet.toFixed(1)} mm of straight track after the taper`, calc_new_point(seg, calc_track_centre_x(r.worstCn), 0),
+          { label: 'Lengthen segment', apply: () => fix_taper_overrun(seg) });
+    }
+
+    // reinforcement stress-relief triangles should stay inside the end segment
+    if (taper_distance_from_edge + triangle_height > segment_length[seg])
+      warn(`End segment ${seg}: reinforcement triangles extend ${(taper_distance_from_edge + triangle_height - segment_length[seg]).toFixed(1)} mm past the segment`, calc_new_point(seg, 0, segment_length[seg] - taper_distance_from_edge - triangle_height),
+        { label: 'Shrink triangles', apply: () => {
+          const minLen = Math.min(state.segment_length[0], state.segment_length[state.segment_length.length - 1]);
+          if (state.taper_distance_from_edge > minLen - 1)
+            state.taper_distance_from_edge = Math.max(0.5, Math.floor((minLen - 1) * 10) / 10);
+          state.triangle_height = Math.max(0.5, Math.floor((minLen - state.taper_distance_from_edge) * 10) / 10);
+          refreshPanelValues();
+          regenerate();
+        } });
+  }
+
+  // bends: the inner edge must clear the copper and leave room for the outline
+  for (let a = 0; a < segment_angle.length; a++) {
+    if (segment_angle[a] === 0) continue;
+    const innerTrack = segment_angle[a] < 0 ? 0 : n - 1;
+    const w = track_widths[innerTrack];
+    const loc = calc_abs_segment_origin_recursive(a + 1, a);
+    const needed = Math.ceil((track_to_edge_spacing + w / 2 + 0.1) * 10) / 10;
+    const fixBend = { label: 'Increase radius', apply: () => {
+      state.segment_inner_radius[a] = needed;
+      refreshPanelValues();
+      regenerate();
+    } };
+    if (segment_inner_radius[a] < w / 2)
+      err(`Bend ${a}: inner radius ${segment_inner_radius[a]} mm is smaller than half the inner track width (${(w / 2).toFixed(2)} mm) - copper self-intersects`, loc, fixBend);
+    else if (segment_inner_radius[a] < track_to_edge_spacing + w / 2)
+      warn(`Bend ${a}: inner radius ${segment_inner_radius[a]} mm leaves no room for the board edge (needs > ${(track_to_edge_spacing + w / 2).toFixed(2)} mm)`, loc, fixBend);
+  }
+
+  // the outline should chain into a closed loop
+  if (!build_outline_loop())
+    warn('Board outline does not form a closed loop - check segment lengths and angles');
+
+  return findings;
+}
+
+function renderDRC() {
+  const tab = document.getElementById('tab-drc');
+  drc.findings = drc.enabled ? run_drc() : [];
+
+  const errs = drc.findings.filter(f => f.level === 'err').length;
+  const warns = drc.findings.length - errs;
+  tab.textContent = drc.enabled && drc.findings.length ? `DRC (${drc.findings.length})` : 'DRC';
+  tab.classList.toggle('drc-err', drc.enabled && errs > 0);
+  tab.classList.toggle('drc-warn', drc.enabled && errs === 0 && warns > 0);
+
+  const list = document.getElementById('drc-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!drc.enabled) {
+    list.innerHTML = '<div class="mini-note">Checks are disabled.</div>';
+    return;
+  }
+  if (!drc.findings.length) {
+    list.innerHTML = '<div class="drc-ok">✓ No issues found.</div>';
+    return;
+  }
+  for (const f of drc.findings) {
+    const row = document.createElement('div');
+    row.className = 'drc-item ' + f.level + (f.loc ? ' loc' : '');
+    const lvl = document.createElement('span');
+    lvl.className = 'lvl';
+    lvl.textContent = f.level === 'err' ? '✕' : '⚠';
+    const msg = document.createElement('span');
+    msg.textContent = f.msg;
+    row.append(lvl, msg);
+    if (f.fix) {
+      const btn = document.createElement('button');
+      btn.className = 'drc-fix';
+      btn.textContent = f.fix.label;
+      btn.addEventListener('click', e => { e.stopPropagation(); f.fix.apply(); });
+      row.appendChild(btn);
+    }
+    if (f.loc) {
+      row.title = 'Click to zoom to this location';
+      row.addEventListener('click', () => {
+        view.x = f.loc[0];
+        view.y = f.loc[1];
+        view.scale = Math.max(view.scale, 20);
+        render();
+      });
+    }
+    list.appendChild(row);
+  }
+}
+
+function buildDRCPanel() {
+  const root = document.getElementById('drc-controls');
+  root.innerHTML = '';
+
+  const fs = document.createElement('fieldset');
+  fs.innerHTML = '<legend>Design rule checks</legend>';
+  const row = document.createElement('div');
+  row.className = 'row';
+  const label = document.createElement('label');
+  label.textContent = 'Enable checks';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = drc.enabled;
+  cb.id = 'in_drc_enabled';
+  label.htmlFor = cb.id;
+  cb.addEventListener('change', () => { drc.enabled = cb.checked; renderDRC(); });
+  row.append(label, cb);
+  fs.appendChild(row);
+
+  const list = document.createElement('div');
+  list.id = 'drc-list';
+  fs.appendChild(list);
+
+  const note = document.createElement('div');
+  note.className = 'mini-note';
+  note.textContent = 'Checks run on every change: via-in-pad fit, pad and taper fit within the end segments, bend radii vs copper and board edge, reinforcement overhang, and outline closure. Click a finding to zoom to it. Taper figures are estimates.';
+  fs.appendChild(note);
+
+  root.appendChild(fs);
+}
+
+// tab switching
+const TABS = { design: 'controls', tracks: 'tracks-controls', drc: 'drc-controls', appearance: 'appearance-controls', export: 'export-controls' };
+function showTab(which) {
+  for (const [name, id] of Object.entries(TABS)) {
+    document.getElementById(id).style.display = name === which ? '' : 'none';
+    document.getElementById('tab-' + name).classList.toggle('active', name === which);
+  }
+}
+for (const name of Object.keys(TABS))
+  document.getElementById('tab-' + name).addEventListener('click', () => showTab(name));
+
+function refreshPanelValues() {
+  for (const group of GROUPS) {
+    for (const item of group.items) {
+      const input = document.getElementById('in_' + item.key);
+      if (!input) continue;
+      input.classList.remove('bad');
+      if (item.type === 'bool') input.checked = state[item.key];
+      else if (item.type === 'array') input.value = state[item.key].join(', ');
+      else input.value = state[item.key];
+    }
+  }
+}
+
+/* ------------------------------ generation ---------------------------- */
+function validate() {
+  if (state.track_widths.length < 2)
+    throw new Error('At least 2 tracks are required.');
+  if (state.segment_length.length < 1)
+    throw new Error('At least 1 segment is required.');
+  if (state.segment_angle.length !== state.segment_length.length - 1)
+    throw new Error(`segment_angle needs ${state.segment_length.length - 1} entries (one fewer than segment lengths), got ${state.segment_angle.length}.`);
+  if (state.segment_inner_radius.length !== state.segment_length.length - 1)
+    throw new Error(`segment_inner_radius needs ${state.segment_length.length - 1} entries (one fewer than segment lengths), got ${state.segment_inner_radius.length}.`);
+  if (state.track_widths.some(w => w <= 0))
+    throw new Error('Track widths must all be > 0.');
+}
+
+function regenerate() {
+  try {
+    validate();
+    apply_params(state);
+    primitives = [];
+    miters = [];
+    current_polygon = null;
+    scr_lines = [];
+    track_lengths = [];
+    override_inter_track_spacing_angle = 0;
+
+    output_eagle_script();
+    apply_miters();
+    outline_loops = null;
+
+    for (const i of [...selectedTracks])
+      if (i >= track_widths.length) selectedTracks.delete(i);
+
+    errorBox.style.display = 'none';
+    encode_share_hash();
+    render();
+    renderTracksTab();
+    renderDRC();
+  } catch (e) {
+    errorBox.textContent = e.message;
+    errorBox.style.display = 'block';
+  }
+}
+
+/* --------------------------- canvas interaction ----------------------- */
+let panning = null;
+const cursorBox = document.getElementById('cursorpos');
+const trackEditor = document.getElementById('track-editor');
+
+function screenToWorld(mx, my) {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  return [view.x + (mx - w / 2) / view.scale, view.y - (my - h / 2) / view.scale];
+}
+
+function angle_in_sweep(angle, g) {
+  const sweep = g.ccw ? mod2pi(g.a2 - g.a1) : mod2pi(g.a1 - g.a2);
+  const off = g.ccw ? mod2pi(angle - g.a1) : mod2pi(g.a1 - angle);
+  return off <= sweep;
+}
+
+function hitTrack(wx, wy) {
+  const tol = 3 / view.scale;
+  let best = null, bestD = Infinity;
+  for (const p of primitives) {
+    if (p.layer !== top_layer_number || p.net === null || p.net === undefined) continue;
+    if (p.type === 'wire') {
+      const dx = p.x2 - p.x1, dy = p.y2 - p.y1;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 ? Math.max(0, Math.min(1, ((wx - p.x1) * dx + (wy - p.y1) * dy) / len2)) : 0;
+      const d = Math.hypot(wx - (p.x1 + t * dx), wy - (p.y1 + t * dy));
+      if (d < p.width / 2 + tol && d < bestD) { bestD = d; best = p.net; }
+    } else if (p.type === 'arc') {
+      const g = eagleArcGeometry(p);
+      if (!g) continue;
+      const dc = Math.hypot(wx - g.cx, wy - g.cy);
+      const d = Math.abs(dc - g.r);
+      if (d < p.width / 2 + tol && d < bestD && angle_in_sweep(Math.atan2(wy - g.cy, wx - g.cx), g)) {
+        bestD = d; best = p.net;
+      }
+    } else if (p.type === 'polygon') {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const q of p.points) {
+        minX = Math.min(minX, q.x); maxX = Math.max(maxX, q.x);
+        minY = Math.min(minY, q.y); maxY = Math.max(maxY, q.y);
+      }
+      const m = p.width / 2 + tol;
+      if (wx > minX - m && wx < maxX + m && wy > minY - m && wy < maxY + m && bestD > 0) {
+        bestD = 0; best = p.net;
+      }
+    }
+  }
+  return best;
+}
+
+function showTrackEditor(i, clientX, clientY) {
+  trackEditor.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'te-head';
+  head.textContent = `Track ${i}`;
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '×';
+  closeBtn.title = 'Close';
+  closeBtn.addEventListener('click', () => { hideTrackEditor(); selectedTracks.clear(); render(); renderTracksTab(); });
+  head.appendChild(closeBtn);
+
+  const row = document.createElement('div');
+  row.className = 'row';
+  const l = document.createElement('label');
+  l.textContent = 'Width (mm)';
+  const inp = document.createElement('input');
+  inp.type = 'number';
+  inp.step = 0.05; inp.min = 0.05;
+  inp.value = state.track_widths[i];
+  inp.id = 'te-width';
+  l.htmlFor = inp.id;
+  inp.addEventListener('input', () => {
+    const v = parseFloat(inp.value);
+    if (!isFinite(v) || v <= 0) return;
+    state.track_widths[i] = v;
+    refreshPanelValues();
+    regenerate();
+  });
+  row.append(l, inp);
+
+  const info = document.createElement('div');
+  info.className = 'mini-note';
+  const L = track_lengths[i] || 0;
+  info.textContent = `L ${L.toFixed(1)} mm · R ${(track_resistance(i) * 1000).toFixed(1)} mΩ · Imax ${track_imax(state.track_widths[i]).toFixed(2)} A`;
+
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'danger';
+  removeBtn.textContent = 'Remove track';
+  removeBtn.addEventListener('click', () => {
+    if (state.track_widths.length <= 2) return;
+    state.track_widths.splice(i, 1);
+    selectedTracks.clear();
+    hideTrackEditor();
+    refreshPanelValues();
+    regenerate();
+  });
+
+  trackEditor.append(head, row, info, removeBtn);
+  const wrap = document.getElementById('canvas-wrap');
+  const rect = wrap.getBoundingClientRect();
+  trackEditor.style.display = 'block';
+  const x = Math.min(clientX - rect.left + 14, rect.width - 200);
+  const y = Math.min(clientY - rect.top + 14, rect.height - 160);
+  trackEditor.style.left = Math.max(8, x) + 'px';
+  trackEditor.style.top = Math.max(8, y) + 'px';
+}
+
+function hideTrackEditor() { trackEditor.style.display = 'none'; }
+
+function handleCanvasClick(e) {
+  const rect = canvas.getBoundingClientRect();
+  const [wx, wy] = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+
+  if (measure.active) {
+    if (!measure.a || (measure.a && measure.b)) {
+      measure.a = [wx, wy];
+      measure.b = null;
+      measure.cursor = null;
+    } else {
+      measure.b = [wx, wy];
+    }
+    render();
+    return;
+  }
+
+  const hit = hitTrack(wx, wy);
+  selectedTracks.clear();
+  if (hit !== null) {
+    selectedTracks.add(hit);
+    showTrackEditor(hit, e.clientX, e.clientY);
+  } else {
+    hideTrackEditor();
+  }
+  render();
+  renderTracksTab();
+}
+
+canvas.addEventListener('pointerdown', e => {
+  panning = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false };
+  canvas.classList.add('panning');
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const [wx, wy] = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+  cursorBox.textContent = `${wx.toFixed(2)}, ${wy.toFixed(2)} mm`;
+
+  if (measure.active && measure.a && !measure.b) {
+    measure.cursor = [wx, wy];
+    render();
+  }
+  if (!panning) return;
+  if (Math.hypot(e.clientX - panning.x, e.clientY - panning.y) > 4) panning.moved = true;
+  if (panning.moved) {
+    view.x = panning.vx - (e.clientX - panning.x) / view.scale;
+    view.y = panning.vy + (e.clientY - panning.y) / view.scale;
+    render();
+  }
+});
+canvas.addEventListener('pointerup', e => {
+  const wasClick = panning && !panning.moved;
+  panning = null;
+  canvas.classList.remove('panning');
+  canvas.releasePointerCapture(e.pointerId);
+  if (wasClick) handleCanvasClick(e);
+});
+
+const measureBtn = document.getElementById('measure-btn');
+measureBtn.addEventListener('click', () => {
+  measure.active = !measure.active;
+  measure.a = measure.b = measure.cursor = null;
+  measureBtn.classList.toggle('active', measure.active);
+  canvas.style.cursor = measure.active ? 'crosshair' : 'grab';
+  if (measure.active) hideTrackEditor();
+  render();
+});
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const wx = view.x + (mx - rect.width / 2) / view.scale;
+  const wy = view.y - (my - rect.height / 2) / view.scale;
+  const factor = Math.exp(-e.deltaY * 0.0015);
+  view.scale = Math.min(Math.max(view.scale * factor, 0.05), 2000);
+  view.x = wx - (mx - rect.width / 2) / view.scale;
+  view.y = wy + (my - rect.height / 2) / view.scale;
+  render();
+}, { passive: false });
+canvas.addEventListener('dblclick', () => { if (!measure.active) fitView(); });
+document.getElementById('fit').addEventListener('click', fitView);
+new ResizeObserver(() => render()).observe(canvas);
+
+/* ------------------------------ presets UI ---------------------------- */
+const presetSelect = document.getElementById('preset');
+for (const name of Object.keys(PRESETS)) {
+  const opt = document.createElement('option');
+  opt.value = name;
+  opt.textContent = name;
+  presetSelect.appendChild(opt);
+}
+presetSelect.addEventListener('change', () => {
+  Object.assign(state, JSON.parse(JSON.stringify(PRESETS[presetSelect.value])));
+  selectedTracks.clear();
+  hideTrackEditor();
+  refreshPanelValues();
+  regenerate();
+  fitView();
+});
+
+/* --------------------------------- boot ------------------------------- */
+const shared = decode_share_hash();
+if (shared) {
+  Object.assign(state, shared.p);
+  if (shared.e) {
+    if (shared.e.t > 0) electrical.thickness_um = shared.e.t;
+    if (shared.e.dT > 0) electrical.deltaT = shared.e.dT;
+  }
+}
+buildPanel();
+buildTracksPanel();
+buildDRCPanel();
+buildAppearancePanel();
+buildExportPanel();
+regenerate();
+fitView();
+</script>
+</body>
+</html>
