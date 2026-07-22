@@ -588,10 +588,14 @@ function draw_outer_cut(segment_number, closest_centre_x_connection) {
     [pad_start_x, , pad_finish_x, , , pad_width] = calc_pad_coordinates(segment_number, i);
 
     draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_start_x, segment_length[segment_number], 0, 1);
-    // arc height via intersecting chord theorem: R = (H/2) + ((W^2)/(8*H))
-    // fixed inherited bug: the original used `segment_number > 1`, which flipped
-    // the arc direction on the far end of two-segment boards
-    draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_start_x, segment_length[segment_number] - distance_arc_from_edge, ((segment_number > 0) ? 1 : -1) * (((pad_arc_height / 2) + ((pad_width * pad_width) / (8 * pad_arc_height))) * 2), 1);
+    // arc radius via the intersecting chord theorem, R = (H/2) + ((W^2)/(8*H)),
+    // so the drawn arc height equals pad_arc_height, capped at a semicircle.
+    // Two inherited bugs fixed here: the original doubled R (Eagle reads the
+    // value as a radius, so the arc came out far flatter than the parameter,
+    // and got flatter still as the parameter grew past W/2), and it used
+    // `segment_number > 1`, flipping the arcs on two-segment boards.
+    const arc_h = Math.min(pad_arc_height, pad_width / 2);
+    draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_start_x, segment_length[segment_number] - distance_arc_from_edge, ((segment_number > 0) ? 1 : -1) * ((arc_h / 2) + ((pad_width * pad_width) / (8 * arc_h))), 1);
     draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_finish_x, segment_length[segment_number] - distance_arc_from_edge, 0, 1);
     draw_part_poly_transform(segment_number, "reinforcement", reinforcement_layer_number, polygon_draw_width, pad_finish_x, segment_length[segment_number], 0, 1);
   }
@@ -1297,17 +1301,19 @@ function build_scr_text(name = export_base()) {
 }
 
 /* ---------------------------- self-test ------------------------------- */
-/* SHA-256 of the .scr each preset must generate. Presets 1, 2, 3 and 5
-   are byte-identical to the Python generator's reference outputs in
-   examples/outputs/; parameters_4 intentionally deviates because the
-   inherited find_max_overshoot off-by-one is fixed (its asymmetric track
-   widths gave the last track an overshoot the original ignored). */
+/* SHA-256 of the .scr each preset must generate. These pin the current
+   generator output, which matches the Python reference outputs in
+   examples/outputs/ except for intentional bug fixes: the overshoot
+   off-by-one (shifts parameters_4's end tapers by 0.18 mm) and the
+   pad-arc radius doubling (the reinforcement arc values in every preset -
+   the drawn arc height now equals pad_arc_height, capped at a semicircle,
+   where the original drew a much flatter arc). */
 const GOLDEN_SCR_SHA256 = {
-  parameters_1: 'fd6fa78184634cdcb5fc0cc287d348110684c056bf4e8bf1ac2c9faef060e7dc',
-  parameters_2: '7c153a37c35838cb2a0cff9470f317d15b713768b759d39b81f5f60e85b28f07',
-  parameters_3: 'a7d076cfd9bb14728e876c5fdf7b3b1cd32be9c9b846d00f3eb0ca5ff12ec842',
-  parameters_4: '4dc8c0ce6a0a573012d9a69248f74e07d70e1d829b2ba698ffd4530e0623eeb5',
-  parameters_5: 'f1fc320dde8b93ad92c2a48f038f5859fd99c1a6264a44f511f06f0c6ffdf483',
+  parameters_1: 'f2fac3acf211b5430130666c6237e24bed96a24717889079646278d410f6f8c7',
+  parameters_2: 'f08f97eadcb7173dd9d1f17b57941af0c3f5417464c2b23517abbd1047055280',
+  parameters_3: '62b6b711212e605d7d3d417a8e593244595136dc5a16aee9996b5a20bcef8f31',
+  parameters_4: '53fda9f14242d92903f9aa4c4a17177819c62a766fe6ad1470a1e549e2fc7330',
+  parameters_5: '54d4f92301b63ff27d535d31b0f3dcd3631d13396a1065084a9462f3217ec45b',
 };
 
 async function run_self_test() {
@@ -1983,7 +1989,7 @@ const GROUPS = [
     { key: 'triangles_across_width', label: 'Triangles', step: 1, min: 1, int: true, focus: 'reinforcement', tip: 'The number of triangles used for stress relief spacing.' },
     { key: 'triangle_height', label: 'Triangle height', step: 0.5, min: 0.1, focus: 'reinforcement', tip: 'The total height of each stress-relief triangle.' },
     { key: 'taper_distance_from_edge', label: 'Taper from edge', step: 0.1, min: 0, focus: 'reinforcement', tip: 'Distance from the connector edge before the taper starts.' },
-    { key: 'pad_arc_height', label: 'Pad arc height', step: 0.1, min: 0.05, focus: 'reinforcement', tip: 'The height of the arc around each pad - must be >= smallest pad width / 2.' },
+    { key: 'pad_arc_height', label: 'Pad arc height', step: 0.1, min: 0.05, focus: 'reinforcement', tip: 'Height of the arc around each pad end. Capped at half the pad width (a semicircle).' },
     { key: 'distance_arc_from_edge', label: 'Arc from edge', step: 0.1, min: 0, focus: 'reinforcement', tip: 'Distance of the pad arc start point from the connector edge.' },
   ]},
   { name: 'Outline', items: [
