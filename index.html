@@ -2690,7 +2690,61 @@ function run_drc() {
   if (!build_outline_loop())
     warn('Board outline does not form a closed loop - check segment lengths and angles');
 
+  // and it should not cross itself (folded-over board)
+  const xing = outline_self_intersection();
+  if (xing)
+    err(`Board outline crosses itself near (${xing[0].toFixed(1)}, ${xing[1].toFixed(1)}) - segments fold over each other`, xing);
+
   return findings;
+}
+
+/* first proper crossing between two outline edges, or null. Arcs are
+   sampled to polylines; edges sharing an endpoint (the normal chain
+   joints) don't count. */
+function outline_self_intersection() {
+  const eps = 1e-3;
+  const segs = [];
+  let pid = 0;
+  for (const p of primitives) {
+    if (p.layer !== outline_layer_number) continue;
+    pid++;
+    if (p.type === 'wire') {
+      if (Math.hypot(p.x2 - p.x1, p.y2 - p.y1) < eps) continue;
+      segs.push({ pid, x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2 });
+    } else {
+      const g = p.type === 'fillet' ? p : eagleArcGeometry(p);
+      if (!g) continue;
+      const pts = sample_world_arc(g, 0.5);
+      for (let i = 0; i < pts.length - 1; i++)
+        segs.push({ pid, x1: pts[i][0], y1: pts[i][1], x2: pts[i + 1][0], y2: pts[i + 1][1] });
+    }
+  }
+
+  const cross = (ax, ay, bx, by, cx, cy) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  for (const s of segs) {
+    s.minX = Math.min(s.x1, s.x2); s.maxX = Math.max(s.x1, s.x2);
+    s.minY = Math.min(s.y1, s.y2); s.maxY = Math.max(s.y1, s.y2);
+  }
+  for (let i = 0; i < segs.length; i++) {
+    const a = segs[i];
+    for (let j = i + 1; j < segs.length; j++) {
+      const b = segs[j];
+      if (a.pid === b.pid) continue;
+      if (a.maxX < b.minX || b.maxX < a.minX || a.maxY < b.minY || b.maxY < a.minY) continue;
+      if (Math.hypot(a.x1 - b.x1, a.y1 - b.y1) < eps || Math.hypot(a.x1 - b.x2, a.y1 - b.y2) < eps ||
+          Math.hypot(a.x2 - b.x1, a.y2 - b.y1) < eps || Math.hypot(a.x2 - b.x2, a.y2 - b.y2) < eps) continue;
+      const d1 = cross(a.x1, a.y1, a.x2, a.y2, b.x1, b.y1);
+      const d2 = cross(a.x1, a.y1, a.x2, a.y2, b.x2, b.y2);
+      const d3 = cross(b.x1, b.y1, b.x2, b.y2, a.x1, a.y1);
+      const d4 = cross(b.x1, b.y1, b.x2, b.y2, a.x2, a.y2);
+      if ((d1 > 0) !== (d2 > 0) && (d3 > 0) !== (d4 > 0)) {
+        const den = (a.x2 - a.x1) * (b.y2 - b.y1) - (a.y2 - a.y1) * (b.x2 - b.x1);
+        const t = ((b.x1 - a.x1) * (b.y2 - b.y1) - (b.y1 - a.y1) * (b.x2 - b.x1)) / den;
+        return [a.x1 + t * (a.x2 - a.x1), a.y1 + t * (a.y2 - a.y1)];
+      }
+    }
+  }
+  return null;
 }
 
 function renderDRC() {
