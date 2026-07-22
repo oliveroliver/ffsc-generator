@@ -965,6 +965,7 @@ function computeBounds() {
 }
 
 function fitView() {
+  stopMomentum();
   const b = computeBounds();
   if (!b) return;
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -3063,8 +3064,34 @@ function handleCanvasClick(e) {
   renderTracksTab();
 }
 
+/* pan momentum: velocity is sampled over the last ~120 ms of the drag and
+   decays exponentially after release */
+const momentum = { vx: 0, vy: 0, raf: null, lastT: 0 };
+
+function stopMomentum() {
+  if (momentum.raf) { cancelAnimationFrame(momentum.raf); momentum.raf = null; }
+}
+
+function startMomentum() {
+  if (Math.hypot(momentum.vx, momentum.vy) < 60) return;   // px/s - ignore slow releases
+  momentum.lastT = performance.now();
+  const step = now => {
+    const dt = Math.min((now - momentum.lastT) / 1000, 0.05);
+    momentum.lastT = now;
+    view.x -= momentum.vx * dt / view.scale;
+    view.y += momentum.vy * dt / view.scale;
+    const decay = Math.exp(-dt / 0.3);
+    momentum.vx *= decay;
+    momentum.vy *= decay;
+    render();
+    momentum.raf = Math.hypot(momentum.vx, momentum.vy) > 20 ? requestAnimationFrame(step) : null;
+  };
+  momentum.raf = requestAnimationFrame(step);
+}
+
 canvas.addEventListener('pointerdown', e => {
-  panning = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false };
+  stopMomentum();
+  panning = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false, samples: [] };
   canvas.classList.add('panning');
   canvas.setPointerCapture(e.pointerId);
 });
@@ -3080,6 +3107,9 @@ canvas.addEventListener('pointermove', e => {
   if (!panning) return;
   if (Math.hypot(e.clientX - panning.x, e.clientY - panning.y) > 4) panning.moved = true;
   if (panning.moved) {
+    const now = performance.now();
+    panning.samples.push({ t: now, x: e.clientX, y: e.clientY });
+    while (panning.samples.length > 2 && now - panning.samples[0].t > 120) panning.samples.shift();
     view.x = panning.vx - (e.clientX - panning.x) / view.scale;
     view.y = panning.vy + (e.clientY - panning.y) / view.scale;
     render();
@@ -3087,10 +3117,23 @@ canvas.addEventListener('pointermove', e => {
 });
 canvas.addEventListener('pointerup', e => {
   const wasClick = panning && !panning.moved;
+  const samples = panning ? panning.samples : [];
   panning = null;
   canvas.classList.remove('panning');
   canvas.releasePointerCapture(e.pointerId);
-  if (wasClick) handleCanvasClick(e);
+  if (wasClick) {
+    handleCanvasClick(e);
+    return;
+  }
+  if (samples.length >= 2) {
+    const a = samples[0], b = samples[samples.length - 1];
+    const dt = (b.t - a.t) / 1000;
+    if (dt > 0.01) {
+      momentum.vx = (b.x - a.x) / dt;
+      momentum.vy = (b.y - a.y) / dt;
+      startMomentum();
+    }
+  }
 });
 
 document.getElementById('undo-btn').addEventListener('click', do_undo);
@@ -3114,6 +3157,7 @@ measureBtn.addEventListener('click', () => {
 });
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
+  stopMomentum();
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left, my = e.clientY - rect.top;
   const wx = view.x + (mx - rect.width / 2) / view.scale;
