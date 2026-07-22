@@ -2,7 +2,7 @@
 
 ## Update (July 2026): browser version experiment
 
-Asked Claude Fable to port this to JS out of curiosity. The whole thing is one file, [index.html](index.html). Open it in a browser, edit parameters, the board regenerates live. Should be treated as expirimental.
+Asked Claude Fable to port this to JS out of curiosity. The whole thing is one file, [index.html](index.html). Open it in a browser, edit parameters, the board regenerates live. Should be treated as experimental.
 
 Now has various exports (Eagle .scr and .brd, KiCad .kicad_pcb, SVG) and DRC.
 
